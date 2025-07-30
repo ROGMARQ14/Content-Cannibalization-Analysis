@@ -32,7 +32,7 @@ class SERPAnalyzer:
                                domain: str,
                                location: str = "United States",
                                language: str = "en",
-                               batch_size: int = 10) -> Dict:
+                               batch_size: int = 5) -> Dict:
         """Check which URLs from the domain appear for each keyword"""
         logger.info(f"Checking SERP overlap for {len(keywords)} keywords on domain: {domain}")
         
