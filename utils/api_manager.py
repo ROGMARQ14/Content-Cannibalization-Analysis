@@ -11,10 +11,10 @@ class APIManager:
     SUPPORTED_PROVIDERS = {
         'openai': {
             'models': {
-                'gpt-4o': {'name': 'GPT-4o', 'context': 128000, 'best_for': 'General analysis'},
+                'gpt-4o': {'name': 'GPT-4o', 'context': 128000, 'best_for': 'Best overall performance'},
                 'gpt-4o-mini': {'name': 'GPT-4o Mini', 'context': 128000, 'best_for': 'Fast, cost-effective analysis'},
-                'o1-preview': {'name': 'O1 Preview', 'context': 128000, 'best_for': 'Complex reasoning'},
-                'o1-mini': {'name': 'O1 Mini', 'context': 128000, 'best_for': 'Fast reasoning'}
+                'gpt-4-turbo': {'name': 'GPT-4 Turbo', 'context': 128000, 'best_for': 'High quality analysis'},
+                'gpt-3.5-turbo': {'name': 'GPT-3.5 Turbo', 'context': 16385, 'best_for': 'Fast, affordable option'}
             },
             'key_name': 'OPENAI_API_KEY',
             'display_name': 'OpenAI'
