@@ -49,8 +49,13 @@ class AIAnalyzer:
         # Process in batches to avoid rate limits and resource constraints
         intents = []
         total_urls = len(prompts)
+        total_batches = (total_urls + batch_size - 1) // batch_size  # Calculate total number of batches
         
-        for i in range(0, total_urls, batch_size):
+        # Create a single progress bar container
+        if hasattr(st, 'progress'):
+            progress_bar = st.progress(0, text=f"Analyzing intent: 0/{total_batches} batches")
+        
+        for batch_num, i in enumerate(range(0, total_urls, batch_size), 1):
             batch = prompts[i:i + batch_size]
             
             try:
@@ -61,13 +66,13 @@ class AIAnalyzer:
                 batch_results = await self.ai_provider.batch_analyze(batch)
                 intents.extend(batch_results)
                 
-                # Update progress
-                progress = (i + len(batch)) / total_urls
+                # Update single progress bar
+                progress = batch_num / total_batches
                 if hasattr(st, 'progress'):
-                    st.progress(progress, text=f"Analyzing intent: {i + len(batch)}/{total_urls} URLs")
+                    progress_bar.progress(progress, text=f"Analyzing intent: {batch_num}/{total_batches} batches")
                     
             except Exception as e:
-                logger.error(f"Error in batch {i//batch_size}: {e}")
+                logger.error(f"Error in batch {batch_num}: {e}")
                 # Add placeholder intents for failed batch
                 intents.extend(['Unknown'] * len(batch))
         
@@ -101,8 +106,13 @@ class AIAnalyzer:
         
         recommendations = []
         batch_size = 5  # Process 5 pairs at a time
+        total_batches = (len(cannibalization_pairs) + batch_size - 1) // batch_size
         
-        for i in range(0, len(cannibalization_pairs), batch_size):
+        # Create a single progress bar
+        if hasattr(st, 'progress'):
+            progress_bar = st.progress(0, text=f"Generating recommendations: 0/{total_batches} batches")
+        
+        for batch_num, i in enumerate(range(0, len(cannibalization_pairs), batch_size), 1):
             batch = cannibalization_pairs[i:i + batch_size]
             
             # Prepare prompts for batch
@@ -126,7 +136,7 @@ class AIAnalyzer:
                     recommendations.append(rec)
                     
             except Exception as e:
-                logger.error(f"Error generating recommendations for batch {i}: {e}")
+                logger.error(f"Error generating recommendations for batch {batch_num}: {e}")
                 # Add placeholder recommendation for failed items
                 for j in range(len(batch)):
                     recommendations.append({
@@ -138,9 +148,9 @@ class AIAnalyzer:
                     })
             
             # Update progress
-            progress = min((i + len(batch)) / len(cannibalization_pairs), 1.0)
+            progress = batch_num / total_batches
             if hasattr(st, 'progress'):
-                st.progress(progress, text=f"Generating recommendations: {i + len(batch)}/{len(cannibalization_pairs)} pairs")
+                progress_bar.progress(progress, text=f"Generating recommendations: {batch_num}/{total_batches} batches")
         
         logger.info(f"Generated {len(recommendations)} recommendations")
         return recommendations
