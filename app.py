@@ -752,6 +752,14 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             # Get ML risk score
             risk_score, contributions = ml_scorer.calculate_adaptive_score(features)
             
+            # Determine risk category based on thresholds
+            if risk_score >= high_threshold:
+                risk_category = 'High'
+            elif risk_score >= medium_threshold:
+                risk_category = 'Medium'
+            else:
+                risk_category = 'Low'
+            
             cannibalization_pairs.append({
                 'url1': row['url1'],
                 'url2': row['url2'],
@@ -762,13 +770,13 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
                 'keywords1': url1_keywords[:10],  # Top 10 keywords
                 'keywords2': url2_keywords[:10],  # Top 10 keywords
                 'risk_score': risk_score,
-                'risk_category': ml_scorer.get_risk_category(risk_score),
+                'risk_category': risk_category,  # THIS IS THE FIX - ensure risk_category is always set
                 'contributions': contributions,
                 **features
             })
         
         # Step 8: Generate AI recommendations with controlled concurrency
-        progress_bar.progress(80, text="Generating AI recommendations...")
+        progress_bar.progress(90, text="Generating AI recommendations...")
         
         # Filter high and medium risk pairs
         priority_pairs = [p for p in cannibalization_pairs 
@@ -791,11 +799,11 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             'total_urls': len(internal_data),
             'total_pairs': len(cannibalization_pairs),
             'high_risk_count': sum(1 for p in cannibalization_pairs 
-                                 if p['risk_score'] >= high_threshold),
+                                 if p['risk_category'] == 'High'),
             'medium_risk_count': sum(1 for p in cannibalization_pairs 
-                                   if medium_threshold <= p['risk_score'] < high_threshold),
+                                   if p['risk_category'] == 'Medium'),
             'low_risk_count': sum(1 for p in cannibalization_pairs 
-                                if p['risk_score'] < medium_threshold),
+                                if p['risk_category'] == 'Low'),
             'pairs': cannibalization_pairs,
             'serp_summary': serp_results.get('summary') if serp_results else None,
             'analysis_method': analysis_enhancement,
@@ -896,7 +904,7 @@ def display_analysis_results():
         pairs_df = pd.DataFrame(results['pairs'])
         
         # Check if required columns exist
-        if 'risk_score' in pairs_df.columns:
+        if 'risk_score' in pairs_df.columns and 'risk_category' in pairs_df.columns:
             pairs_df = pairs_df.sort_values('risk_score', ascending=False)
             
             # Display top 10
@@ -1007,8 +1015,20 @@ def generate_reports_tab():
         results = st.session_state.analysis_results
         pairs_df = pd.DataFrame(results['pairs'])
         
-        # High risk pairs
-        high_risk_df = pairs_df[pairs_df['risk_category'] == 'High'].copy()
+        # Ensure risk_category column exists in pairs_df
+        if 'risk_category' not in pairs_df.columns and 'risk_score' in pairs_df.columns:
+            # Add risk_category based on risk_score if missing
+            pairs_df['risk_category'] = pairs_df['risk_score'].apply(
+                lambda x: 'High' if x >= 0.7 else ('Medium' if x >= 0.4 else 'Low')
+            )
+        
+        # High risk pairs - with safety check
+        if 'risk_category' in pairs_df.columns:
+            high_risk_df = pairs_df[pairs_df['risk_category'] == 'High'].copy()
+        else:
+            # Fallback: use risk_score directly
+            high_risk_df = pairs_df[pairs_df.get('risk_score', 0) >= 0.7].copy()
+            
         if not high_risk_df.empty:
             st.markdown("### 🔴 High Risk Pairs")
             ExportHandler.export_with_state_preservation(
@@ -1076,7 +1096,7 @@ def generate_reports_tab():
                     # All pairs
                     pairs_df.to_excel(writer, sheet_name='All Pairs', index=False)
                     
-                    # High risk only
+                    # High risk only - with safety check
                     if not high_risk_df.empty:
                         high_risk_df.to_excel(writer, sheet_name='High Risk', index=False)
                     
