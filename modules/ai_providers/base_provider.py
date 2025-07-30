@@ -24,34 +24,44 @@ class BaseAIProvider(ABC):
         """Send a prompt and expect JSON response"""
         pass
     
-    async def batch_analyze(self, prompts: List[str], max_concurrent: int = 3, **kwargs) -> List[str]:
-        """Analyze multiple prompts in batch with concurrency control"""
+    async def batch_analyze(self, prompts: List[str], max_concurrent: int = 1, **kwargs) -> List[str]:
+        """Analyze multiple prompts in sequential batches to conserve memory"""
         results = []
         
-        # Process in chunks to avoid overwhelming the system
-        for i in range(0, len(prompts), max_concurrent):
-            chunk = prompts[i:i + max_concurrent]
-            tasks = [self.analyze(prompt, **kwargs) for prompt in chunk]
-            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Handle results and exceptions
-            for j, result in enumerate(chunk_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Error in prompt {i+j}: {result}")
-                    results.append("Unable to analyze")
-                else:
-                    results.append(result)
-            
-            # Add small delay between chunks
-            if i + max_concurrent < len(prompts):
-                await asyncio.sleep(0.5)
+        # Process sequentially to avoid memory issues
+        for i, prompt in enumerate(prompts):
+            try:
+                result = await self.analyze(prompt, **kwargs)
+                results.append(result)
+                
+                # Add small delay between requests to avoid rate limits
+                if i < len(prompts) - 1:
+                    await asyncio.sleep(0.3)
+                    
+            except Exception as e:
+                logger.error(f"Error in prompt {i}: {e}")
+                results.append("Unable to analyze")
         
         return results
     
-    async def batch_analyze_json(self, prompts: List[str], **kwargs) -> List[Dict]:
-        """Analyze multiple prompts expecting JSON responses"""
-        tasks = [self.analyze_json(prompt, **kwargs) for prompt in prompts]
-        return await asyncio.gather(*tasks)
+    async def batch_analyze_json(self, prompts: List[str], max_concurrent: int = 1, **kwargs) -> List[Dict]:
+        """Analyze multiple prompts expecting JSON responses - sequential processing"""
+        results = []
+        
+        for i, prompt in enumerate(prompts):
+            try:
+                result = await self.analyze_json(prompt, **kwargs)
+                results.append(result)
+                
+                # Add small delay between requests
+                if i < len(prompts) - 1:
+                    await asyncio.sleep(0.3)
+                    
+            except Exception as e:
+                logger.error(f"Error in prompt {i}: {e}")
+                results.append({'error': str(e)})
+        
+        return results
     
     def create_intent_prompt(self, title: str, h1: str, meta_description: str) -> str:
         """Create a prompt for intent classification"""
