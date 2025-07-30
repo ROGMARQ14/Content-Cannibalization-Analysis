@@ -457,6 +457,30 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
             help="Only analyze URL pairs above this similarity",
             key="min_similarity_threshold"
         )
+        
+        # SEO Impact Filter
+        filter_by_performance = st.checkbox(
+            "Filter by SEO Performance",
+            value=True,
+            help="Only analyze URLs with meaningful search traffic"
+        )
+        
+        if filter_by_performance:
+            min_clicks = st.number_input(
+                "Minimum clicks (last 3 months)",
+                min_value=0,
+                max_value=100,
+                value=1,
+                help="Exclude URLs with fewer clicks than this"
+            )
+            
+            min_impressions = st.number_input(
+                "Minimum impressions (last 3 months)",
+                min_value=0,
+                max_value=1000,
+                value=10,
+                help="Exclude URLs with fewer impressions than this"
+            )
     
     with col2:
         if use_serp:
@@ -470,6 +494,13 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
     # Run analysis button
     if st.button("🚀 Run Cannibalization Analysis", type="primary", use_container_width=True):
         if internal_file and (gsc_file or use_gsc_oauth):
+            # Pass filter parameters
+            filter_params = {
+                'filter_by_performance': filter_by_performance,
+                'min_clicks': min_clicks if filter_by_performance else 0,
+                'min_impressions': min_impressions if filter_by_performance else 0
+            }
+            
             asyncio.run(run_analysis(
                 internal_file, 
                 gsc_file if not use_gsc_oauth else None,
@@ -486,7 +517,8 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
                 analysis_enhancement,
                 content_option,
                 ai_batch_size,
-                processing_delay
+                processing_delay,
+                filter_params
             ))
         else:
             st.error("Please upload both internal SEO data and GSC performance data.")
@@ -498,7 +530,8 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
 async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model,
                       weights, use_serp, serp_location, min_similarity,
                       high_threshold, medium_threshold, extraction_config,
-                      analysis_enhancement, content_option, ai_batch_size, processing_delay):
+                      analysis_enhancement, content_option, ai_batch_size, 
+                      processing_delay, filter_params):
     """Run the complete analysis pipeline"""
     
     try:
@@ -519,6 +552,40 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             gsc_data = None  # Placeholder
         
         progress_bar.progress(20, text="Data loaded successfully")
+        
+        # Step 2.5: Filter by SEO performance if requested
+        if filter_params['filter_by_performance']:
+            progress_bar.progress(25, text="Filtering by SEO performance...")
+            
+            # Get URLs that meet performance criteria
+            performance_urls = gsc_data.groupby('url').agg({
+                'clicks': 'sum',
+                'impressions': 'sum'
+            }).reset_index()
+            
+            # Filter based on thresholds
+            qualified_urls = performance_urls[
+                (performance_urls['clicks'] >= filter_params['min_clicks']) |
+                (performance_urls['impressions'] >= filter_params['min_impressions'])
+            ]['url'].tolist()
+            
+            # Filter internal data to only include qualified URLs
+            original_count = len(internal_data)
+            internal_data = internal_data[internal_data['url'].isin(qualified_urls)]
+            filtered_count = len(internal_data)
+            
+            st.info(f"""
+            📊 Performance Filter Applied:
+            - Original URLs: {original_count}
+            - URLs with meaningful traffic: {filtered_count}
+            - Filtered out: {original_count - filtered_count} low-traffic URLs
+            
+            This will significantly reduce processing time and focus on impactful cannibalization.
+            """)
+            
+            # Also filter embeddings if provided
+            if embeddings_file and embeddings_data is not None:
+                embeddings_data = embeddings_data[embeddings_data['URL'].isin(qualified_urls)]
         
         # Step 2: Initialize analyzers
         progress_bar.progress(30, text="Initializing AI analyzer...")
