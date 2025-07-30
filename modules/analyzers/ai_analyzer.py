@@ -22,6 +22,7 @@ class AIAnalyzer:
         self.provider_name = provider
         self.model_name = model
         self.ai_provider = self._create_provider(provider, model, api_key)
+        self.batch_delay = 0.5  # Default delay between batches
         
     def _create_provider(self, provider: str, model: str, api_key: str) -> BaseAIProvider:
         """Create the appropriate AI provider instance"""
@@ -61,7 +62,7 @@ class AIAnalyzer:
             try:
                 # Add delay between batches to prevent overwhelming the system
                 if i > 0:
-                    await asyncio.sleep(1)  # 1 second delay between batches
+                    await asyncio.sleep(self.batch_delay)
                 
                 batch_results = await self.ai_provider.batch_analyze(batch)
                 intents.extend(batch_results)
