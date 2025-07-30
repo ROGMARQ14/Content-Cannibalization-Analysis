@@ -657,6 +657,10 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         # Step 5: Calculate similarities
         progress_bar.progress(60, text="Calculating content similarities...")
         
+        # Debug: Check what columns we have
+        logger.info(f"Internal data columns: {internal_data.columns.tolist()}")
+        logger.info(f"Sample row: {internal_data.iloc[0].to_dict() if len(internal_data) > 0 else 'No data'}")
+        
         similarity_analyzer = SimilarityAnalyzer(
             embeddings_data=embeddings_data,
             use_content_embeddings=use_content_analysis
@@ -665,6 +669,8 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             internal_data, 
             min_similarity
         )
+        
+        logger.info(f"Similarity results: {len(similarity_results)} pairs found")
         
         # Step 6: SERP analysis (if enabled)
         serp_results = None
@@ -832,45 +838,67 @@ def display_analysis_results():
         st.info(f"📊 Analysis Method: {results['analysis_method']}" + 
                (" with content extraction" if results.get('content_analyzed') else ""))
     
-    # Risk distribution chart
-    st.subheader("Risk Distribution")
-    
-    risk_data = pd.DataFrame({
-        'Risk Level': ['High', 'Medium', 'Low'],
-        'Count': [results['high_risk_count'], 
-                 results['medium_risk_count'], 
-                 results['low_risk_count']]
-    })
-    
-    fig = px.pie(risk_data, values='Count', names='Risk Level',
-                color_discrete_map={'High': '#ff4b4b', 'Medium': '#ffa500', 'Low': '#00cc00'})
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Top cannibalization pairs
-    st.subheader("🔥 Top Cannibalization Issues")
-    
-    # Convert pairs to DataFrame for display
-    pairs_df = pd.DataFrame(results['pairs'])
-    pairs_df = pairs_df.sort_values('risk_score', ascending=False)
-    
-    # Display top 10
-    for idx, row in pairs_df.head(10).iterrows():
-        with st.expander(f"**{row['url1'][:50]}...** vs **{row['url2'][:50]}...**"):
-            col1, col2 = st.columns(2)
+    # Only show charts and details if we have pairs
+    if results['total_pairs'] > 0:
+        # Risk distribution chart
+        st.subheader("Risk Distribution")
+        
+        risk_data = pd.DataFrame({
+            'Risk Level': ['High', 'Medium', 'Low'],
+            'Count': [results['high_risk_count'], 
+                     results['medium_risk_count'], 
+                     results['low_risk_count']]
+        })
+        
+        fig = px.pie(risk_data, values='Count', names='Risk Level',
+                    color_discrete_map={'High': '#ff4b4b', 'Medium': '#ffa500', 'Low': '#00cc00'})
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Top cannibalization pairs
+        st.subheader("🔥 Top Cannibalization Issues")
+        
+        # Convert pairs to DataFrame for display
+        pairs_df = pd.DataFrame(results['pairs'])
+        
+        # Check if required columns exist
+        if 'risk_score' in pairs_df.columns:
+            pairs_df = pairs_df.sort_values('risk_score', ascending=False)
             
-            with col1:
-                st.markdown(f"**Risk Score:** <span class='{row['risk_category'].lower()}-risk'>"
-                          f"{row['risk_score']:.2%}</span>", unsafe_allow_html=True)
-                st.markdown(f"**Risk Category:** {row['risk_category']}")
-                if row.get('title1'):
-                    st.markdown(f"**Title 1:** {row['title1'][:60]}...")
-                if row.get('title2'):
-                    st.markdown(f"**Title 2:** {row['title2'][:60]}...")
-            
-            with col2:
-                st.markdown("**Similarity Breakdown:**")
-                for feature, value in row['contributions'].items():
-                    st.markdown(f"- {feature.replace('_', ' ').title()}: {value:.2%}")
+            # Display top 10
+            for idx, row in pairs_df.head(10).iterrows():
+                with st.expander(f"**{row['url1'][:50]}...** vs **{row['url2'][:50]}...**"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**Risk Score:** <span class='{row['risk_category'].lower()}-risk'>"
+                                  f"{row['risk_score']:.2%}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**Risk Category:** {row['risk_category']}")
+                        if row.get('title1'):
+                            st.markdown(f"**Title 1:** {row['title1'][:60]}...")
+                        if row.get('title2'):
+                            st.markdown(f"**Title 2:** {row['title2'][:60]}...")
+                    
+                    with col2:
+                        st.markdown("**Similarity Breakdown:**")
+                        if 'contributions' in row:
+                            for feature, value in row['contributions'].items():
+                                st.markdown(f"- {feature.replace('_', ' ').title()}: {value:.2%}")
+        else:
+            st.error("Analysis results are missing required data. Please re-run the analysis.")
+    else:
+        st.warning("""
+        🔍 **No cannibalization issues detected!**
+        
+        This could mean:
+        1. Your content is well-differentiated
+        2. The similarity threshold is too high (current: {:.0%})
+        3. The performance filter excluded too many URLs
+        
+        Try:
+        - Lowering the similarity threshold
+        - Adjusting the performance filter settings
+        - Checking if embeddings are properly loaded
+        """.format(st.session_state.get('min_similarity', 0.3)))
 
 def show_ai_insights_tab():
     """Display AI-generated insights"""
