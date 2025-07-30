@@ -41,8 +41,13 @@ class SERPAnalyzer:
         
         # Process keywords in batches
         all_results = {}
+        total_batches = (len(keywords) + batch_size - 1) // batch_size
         
-        for i in range(0, len(keywords), batch_size):
+        # Create a single progress bar
+        if hasattr(st, 'progress'):
+            progress_bar = st.progress(0, text=f"Analyzing SERPs: 0/{total_batches} batches")
+        
+        for batch_num, i in enumerate(range(0, len(keywords), batch_size), 1):
             batch = keywords[i:i + batch_size]
             
             # Create tasks for batch
@@ -69,9 +74,9 @@ class SERPAnalyzer:
                 logger.error(f"Batch processing error: {e}")
             
             # Update progress
-            progress = min((i + len(batch)) / len(keywords), 1.0)
+            progress = batch_num / total_batches
             if hasattr(st, 'progress'):
-                st.progress(progress, text=f"Analyzing SERPs: {i + len(batch)}/{len(keywords)} keywords")
+                progress_bar.progress(progress, text=f"Analyzing SERPs: {batch_num}/{total_batches} batches")
         
         # Calculate overall overlap statistics
         overlap_summary = self._calculate_overlap_summary(all_results)
