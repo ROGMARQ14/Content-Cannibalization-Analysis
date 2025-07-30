@@ -205,18 +205,24 @@ def main():
             "AI Processing Batch Size",
             min_value=1,
             max_value=10,
-            value=3,
-            help="Smaller batches use less memory but take longer. Recommended: 3-5 for Streamlit Cloud"
+            value=5,
+            help="Number of URLs to process per batch. Smaller = less memory usage"
         )
         
-        # Concurrent requests control
-        max_concurrent = st.slider(
-            "Max Concurrent API Calls",
-            min_value=1,
-            max_value=5,
-            value=2,
-            help="Lower values prevent timeouts on Streamlit Cloud. Recommended: 2-3"
+        # Processing speed
+        processing_speed = st.select_slider(
+            "Processing Speed",
+            options=["Conservative", "Balanced", "Fast"],
+            value="Balanced",
+            help="Conservative: Slower but stable | Balanced: Good for most cases | Fast: May timeout on large datasets"
         )
+        
+        # Map speed to delay settings
+        speed_delays = {
+            "Conservative": 1.0,
+            "Balanced": 0.5,
+            "Fast": 0.2
+        }
         
         # Content Extraction Settings
         extraction_config = show_content_extraction_settings()
@@ -228,7 +234,7 @@ def main():
         with tabs[0]:
             run_analysis_tab(selected_provider, selected_model, weights, 
                            use_serp, use_gsc_oauth, high_threshold, medium_threshold,
-                           extraction_config, ai_batch_size, max_concurrent)
+                           extraction_config, ai_batch_size, speed_delays[processing_speed])
         
         with tabs[1]:
             show_ai_insights_tab()
@@ -317,7 +323,7 @@ def show_content_extraction_settings():
 
 def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth, 
                     high_threshold, medium_threshold, extraction_config,
-                    ai_batch_size, max_concurrent):
+                    ai_batch_size, processing_delay):
     """Run the main analysis"""
     
     st.header("📊 Content Analysis")
@@ -480,7 +486,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
                 analysis_enhancement,
                 content_option,
                 ai_batch_size,
-                max_concurrent
+                processing_delay
             ))
         else:
             st.error("Please upload both internal SEO data and GSC performance data.")
@@ -492,7 +498,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
 async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model,
                       weights, use_serp, serp_location, min_similarity,
                       high_threshold, medium_threshold, extraction_config,
-                      analysis_enhancement, content_option, ai_batch_size, max_concurrent):
+                      analysis_enhancement, content_option, ai_batch_size, processing_delay):
     """Run the complete analysis pipeline"""
     
     try:
@@ -526,10 +532,26 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         # Step 3: Analyze content intent with controlled batch size
         progress_bar.progress(40, text="Analyzing content intent with AI...")
         
-        # Limit URLs for Streamlit Cloud if needed
-        if len(internal_data) > 500:
-            st.warning(f"Large dataset detected ({len(internal_data)} URLs). Processing first 500 URLs to prevent timeouts.")
-            internal_data = internal_data.head(500)
+        # Check dataset size and warn if large
+        if len(internal_data) > 300:
+            st.warning(f"""
+            ⚠️ Large dataset detected ({len(internal_data)} URLs)
+            
+            **Recommendations for Streamlit Cloud:**
+            - Use "Conservative" processing speed
+            - Consider analyzing in smaller chunks (export filtered data)
+            - Focus on high-traffic pages first
+            
+            The app will process all URLs but may take longer to prevent timeouts.
+            """)
+            
+            # Force conservative settings for large datasets
+            if processing_delay < 0.5:
+                processing_delay = 0.5
+                st.info("Automatically adjusted to Conservative speed for stability")
+        
+        # Add delay between batches based on speed setting
+        ai_analyzer.batch_delay = processing_delay
         
         internal_data = await ai_analyzer.analyze_intent_batch(internal_data, batch_size=ai_batch_size)
         
