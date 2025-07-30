@@ -1,324 +1,287 @@
-# modules/analyzers/ai_analyzer.py
-from typing import Dict, List, Tuple, Optional
+# modules/analyzers/similarity_analyzer.py
 import pandas as pd
 import numpy as np
-import asyncio
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 import logging
-from datetime import datetime
-import streamlit as st
-
-from ..ai_providers.base_provider import BaseAIProvider
-from ..ai_providers.openai_provider import OpenAIProvider
-from ..ai_providers.anthropic_provider import AnthropicProvider
-from ..ai_providers.gemini_provider import GeminiProvider
+from typing import Dict, List, Optional, Tuple
+import re
 
 logger = logging.getLogger(__name__)
 
-class AIAnalyzer:
-    """AI-powered content analysis and recommendations"""
+class SimilarityAnalyzer:
+    """Calculate similarities between URLs using various methods"""
     
-    def __init__(self, provider: str, model: str, api_key: str):
-        """Initialize with specific AI provider"""
-        self.provider_name = provider
-        self.model_name = model
-        self.ai_provider = self._create_provider(provider, model, api_key)
-        self.batch_delay = 0.5  # Default delay between batches
-        
-    def _create_provider(self, provider: str, model: str, api_key: str) -> BaseAIProvider:
-        """Create the appropriate AI provider instance"""
-        if provider == 'openai':
-            return OpenAIProvider(api_key, model)
-        elif provider == 'anthropic':
-            return AnthropicProvider(api_key, model)
-        elif provider == 'gemini':
-            return GeminiProvider(api_key, model)
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
-    
-    async def analyze_intent_batch(self, content_data: pd.DataFrame, batch_size: int = 5) -> pd.DataFrame:
-        """Analyze content intent using AI in batches"""
-        logger.info(f"Analyzing intent for {len(content_data)} URLs using {self.provider_name}/{self.model_name}")
-        
-        # Prepare prompts
-        prompts = []
-        for _, row in content_data.iterrows():
-            title = row.get('title', '')
-            h1 = row.get('h1', '')
-            meta_desc = row.get('meta_description', '')
-            prompts.append(self.ai_provider.create_intent_prompt(title, h1, meta_desc))
-        
-        # Process in batches to avoid rate limits and resource constraints
-        intents = []
-        total_urls = len(prompts)
-        total_batches = (total_urls + batch_size - 1) // batch_size  # Calculate total number of batches
-        
-        # Create a single progress bar container
-        if hasattr(st, 'progress'):
-            progress_bar = st.progress(0, text=f"Analyzing intent: 0/{total_batches} batches")
-        
-        for batch_num, i in enumerate(range(0, total_urls, batch_size), 1):
-            batch = prompts[i:i + batch_size]
-            
-            try:
-                # Add delay between batches to prevent overwhelming the system
-                if i > 0:
-                    await asyncio.sleep(self.batch_delay)
-                
-                batch_results = await self.ai_provider.batch_analyze(batch)
-                intents.extend(batch_results)
-                
-                # Update single progress bar
-                progress = batch_num / total_batches
-                if hasattr(st, 'progress'):
-                    progress_bar.progress(progress, text=f"Analyzing intent: {batch_num}/{total_batches} batches")
-                    
-            except Exception as e:
-                logger.error(f"Error in batch {batch_num}: {e}")
-                # Add placeholder intents for failed batch
-                intents.extend(['Unknown'] * len(batch))
-        
-        # Clean and standardize intents
-        content_data['ai_intent'] = [self._standardize_intent(intent) for intent in intents]
-        
-        logger.info("Intent analysis completed")
-        return content_data
-    
-    def _standardize_intent(self, intent: str) -> str:
-        """Standardize intent classifications"""
-        intent_lower = intent.lower().strip()
-        
-        if 'information' in intent_lower:
-            return 'Informational'
-        elif 'commercial' in intent_lower:
-            return 'Commercial'
-        elif 'transactional' in intent_lower:
-            return 'Transactional'
-        elif 'navigational' in intent_lower:
-            return 'Navigational'
-        else:
-            # Default to informational if unclear
-            return 'Informational'
-    
-    async def generate_recommendations(self, 
-                                     cannibalization_pairs: List[Dict],
-                                     performance_data: Optional[pd.DataFrame] = None) -> List[Dict]:
-        """Generate AI-powered recommendations for cannibalization issues"""
-        logger.info(f"Generating recommendations for {len(cannibalization_pairs)} pairs")
-        
-        recommendations = []
-        batch_size = 5  # Process 5 pairs at a time
-        total_batches = (len(cannibalization_pairs) + batch_size - 1) // batch_size
-        
-        # Create a single progress bar
-        if hasattr(st, 'progress'):
-            progress_bar = st.progress(0, text=f"Generating recommendations: 0/{total_batches} batches")
-        
-        for batch_num, i in enumerate(range(0, len(cannibalization_pairs), batch_size), 1):
-            batch = cannibalization_pairs[i:i + batch_size]
-            
-            # Prepare prompts for batch
-            prompts = []
-            for pair in batch:
-                # Enhance pair data with performance metrics if available
-                if performance_data is not None:
-                    pair = self._enhance_with_performance(pair, performance_data)
-                
-                prompts.append(self.ai_provider.create_recommendation_prompt(pair))
-            
-            # Get recommendations
-            try:
-                batch_recommendations = await self.ai_provider.batch_analyze_json(prompts)
-                
-                # Add metadata to recommendations
-                for j, rec in enumerate(batch_recommendations):
-                    rec['pair_index'] = i + j
-                    rec['generated_at'] = datetime.now().isoformat()
-                    rec['ai_model'] = f"{self.provider_name}/{self.model_name}"
-                    recommendations.append(rec)
-                    
-            except Exception as e:
-                logger.error(f"Error generating recommendations for batch {batch_num}: {e}")
-                # Add placeholder recommendation for failed items
-                for j in range(len(batch)):
-                    recommendations.append({
-                        'pair_index': i + j,
-                        'error': str(e),
-                        'severity': 'unknown',
-                        'recommended_action': 'manual_review',
-                        'generated_at': datetime.now().isoformat()
-                    })
-            
-            # Update progress
-            progress = batch_num / total_batches
-            if hasattr(st, 'progress'):
-                progress_bar.progress(progress, text=f"Generating recommendations: {batch_num}/{total_batches} batches")
-        
-        logger.info(f"Generated {len(recommendations)} recommendations")
-        return recommendations
-    
-    def _enhance_with_performance(self, pair: Dict, performance_data: pd.DataFrame) -> Dict:
-        """Enhance cannibalization pair with performance metrics"""
-        try:
-            # Get performance metrics for URL 1
-            url1_data = performance_data[performance_data['Landing page'] == pair['url1']]
-            if not url1_data.empty:
-                pair['clicks1'] = int(url1_data['Clicks'].sum())
-                pair['impressions1'] = int(url1_data['Impressions'].sum())
-                pair['avg_position1'] = float(url1_data['Position'].mean())
-                pair['ctr1'] = float(url1_data['CTR'].mean()) if 'CTR' in url1_data else 0
-            
-            # Get performance metrics for URL 2
-            url2_data = performance_data[performance_data['Landing page'] == pair['url2']]
-            if not url2_data.empty:
-                pair['clicks2'] = int(url2_data['Clicks'].sum())
-                pair['impressions2'] = int(url2_data['Impressions'].sum())
-                pair['avg_position2'] = float(url2_data['Position'].mean())
-                pair['ctr2'] = float(url2_data['CTR'].mean()) if 'CTR' in url2_data else 0
-                
-        except Exception as e:
-            logger.warning(f"Could not enhance pair with performance data: {e}")
-        
-        return pair
-    
-    async def analyze_content_clusters(self, 
-                                     url_clusters: List[List[str]], 
-                                     content_data: pd.DataFrame) -> List[Dict]:
-        """Analyze content clusters for gaps and opportunities"""
-        logger.info(f"Analyzing {len(url_clusters)} content clusters")
-        
-        cluster_analyses = []
-        
-        for i, cluster_urls in enumerate(url_clusters):
-            # Get content data for cluster
-            cluster_content = []
-            for url in cluster_urls:
-                row = content_data[content_data['Address'] == url]
-                if not row.empty:
-                    cluster_content.append({
-                        'url': url,
-                        'title': row.iloc[0].get('Title 1', ''),
-                        'keywords': self._extract_keywords(row.iloc[0])
-                    })
-            
-            if cluster_content:
-                try:
-                    prompt = self.ai_provider.create_content_analysis_prompt(cluster_content)
-                    analysis = await self.ai_provider.analyze_json(prompt)
-                    analysis['cluster_id'] = i
-                    analysis['cluster_size'] = len(cluster_urls)
-                    cluster_analyses.append(analysis)
-                    
-                except Exception as e:
-                    logger.error(f"Error analyzing cluster {i}: {e}")
-                    cluster_analyses.append({
-                        'cluster_id': i,
-                        'error': str(e),
-                        'cluster_size': len(cluster_urls)
-                    })
-            
-            # Update progress
-            progress = (i + 1) / len(url_clusters)
-            if hasattr(st, 'progress'):
-                st.progress(progress, text=f"Analyzing clusters: {i + 1}/{len(url_clusters)}")
-        
-        return cluster_analyses
-    
-    def _extract_keywords(self, row: pd.Series) -> List[str]:
-        """Extract keywords from content row"""
-        keywords = []
-        
-        # Extract from title and H1
-        title = str(row.get('Title 1', ''))
-        h1 = str(row.get('H1-1', ''))
-        
-        # Simple keyword extraction (could be enhanced with NLP)
-        import re
-        
-        # Combine and clean text
-        text = f"{title} {h1}".lower()
-        # Remove common words and extract meaningful terms
-        words = re.findall(r'\b[a-z]+\b', text)
-        
-        # Filter out very common words (simple stopword removal)
-        stopwords = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
-                    'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were'}
-        keywords = [w for w in words if w not in stopwords and len(w) > 2]
-        
-        # Return top 10 unique keywords
-        seen = set()
-        unique_keywords = []
-        for kw in keywords:
-            if kw not in seen:
-                seen.add(kw)
-                unique_keywords.append(kw)
-        
-        return unique_keywords[:10]
-    
-    async def generate_executive_summary(self, 
-                                       analysis_results: Dict,
-                                       recommendations: List[Dict]) -> str:
-        """Generate an executive summary of the analysis"""
-        prompt = f"""
-        Create an executive summary for this content cannibalization analysis:
-        
-        Analysis Overview:
-        - Total URLs analyzed: {analysis_results.get('total_urls', 0)}
-        - Cannibalization pairs found: {analysis_results.get('total_pairs', 0)}
-        - High-risk pairs: {analysis_results.get('high_risk_count', 0)}
-        - Medium-risk pairs: {analysis_results.get('medium_risk_count', 0)}
-        - Low-risk pairs: {analysis_results.get('low_risk_count', 0)}
-        
-        Top Issues:
-        {self._format_top_issues(recommendations[:5])}
-        
-        Create a concise executive summary (200-300 words) that:
-        1. Highlights the most critical findings
-        2. Quantifies the potential SEO impact
-        3. Provides 3-5 key action items
-        4. Estimates the effort required
-        
-        Format in clear, professional language suitable for stakeholders.
+    def __init__(self, embeddings_data: Optional[pd.DataFrame] = None, 
+                 use_content_embeddings: bool = False):
         """
+        Initialize similarity analyzer
+        
+        Args:
+            embeddings_data: DataFrame with URL and embedding columns (e.g., from Screaming Frog)
+            use_content_embeddings: Whether to use content embeddings from content analysis
+        """
+        self.embeddings_data = embeddings_data
+        self.use_content_embeddings = use_content_embeddings
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        
+    def calculate_all_similarities(self, 
+                                 urls_df: pd.DataFrame, 
+                                 min_similarity: float = 0.3) -> pd.DataFrame:
+        """Calculate all pairwise similarities between URLs"""
+        logger.info(f"Calculating similarities for {len(urls_df)} URLs")
+        logger.info(f"Columns in urls_df: {urls_df.columns.tolist()}")
+        
+        similarity_pairs = []
+        
+        # Calculate pairwise similarities
+        for i in range(len(urls_df)):
+            for j in range(i + 1, len(urls_df)):
+                url1_data = urls_df.iloc[i]
+                url2_data = urls_df.iloc[j]
+                
+                # Log first pair for debugging
+                if i == 0 and j == 1:
+                    logger.info(f"Sample URL1 data: {url1_data.to_dict()}")
+                    logger.info(f"Sample URL2 data: {url2_data.to_dict()}")
+                
+                # Calculate individual similarities
+                similarities = self._calculate_pair_similarities(url1_data, url2_data)
+                
+                # Log first similarity calculation
+                if i == 0 and j == 1:
+                    logger.info(f"Sample similarities: {similarities}")
+                
+                # Only keep if above minimum threshold
+                if similarities['overall_similarity'] >= min_similarity:
+                    pair_data = {
+                        'url1': url1_data['url'],
+                        'url2': url2_data['url'],
+                        'title1': url1_data.get('title', ''),
+                        'title2': url2_data.get('title', ''),
+                        'intent1': url1_data.get('ai_intent', 'Unknown'),
+                        'intent2': url2_data.get('ai_intent', 'Unknown'),
+                        **similarities
+                    }
+                    similarity_pairs.append(pair_data)
+        
+        logger.info(f"Found {len(similarity_pairs)} pairs above {min_similarity} similarity threshold")
+        
+        return pd.DataFrame(similarity_pairs)
+    
+    def _calculate_pair_similarities(self, url1_data: pd.Series, url2_data: pd.Series) -> Dict[str, float]:
+        """Calculate all similarity metrics for a URL pair"""
+        
+        # Title similarity
+        title_sim = self._calculate_text_similarity(
+            url1_data.get('title', ''), 
+            url2_data.get('title', '')
+        )
+        
+        # H1 similarity
+        h1_sim = self._calculate_text_similarity(
+            url1_data.get('h1', ''), 
+            url2_data.get('h1', '')
+        )
+        
+        # Meta description similarity
+        meta_sim = self._calculate_text_similarity(
+            url1_data.get('meta_description', ''), 
+            url2_data.get('meta_description', '')
+        )
+        
+        # Semantic/Content similarity
+        if self.use_content_embeddings and 'content_embedding' in url1_data.index:
+            # Use content embeddings from our content analysis
+            semantic_sim = self._calculate_embedding_similarity(
+                url1_data.get('content_embedding'),
+                url2_data.get('content_embedding')
+            )
+            similarity_type = 'content_similarity'
+        elif self.embeddings_data is not None:
+            # Use Screaming Frog embeddings
+            semantic_sim = self._calculate_sf_embedding_similarity(
+                url1_data['url'],
+                url2_data['url']
+            )
+            similarity_type = 'semantic_similarity'
+        else:
+            # Fallback to text-based semantic similarity
+            semantic_sim = self._calculate_semantic_similarity_fallback(url1_data, url2_data)
+            similarity_type = 'semantic_similarity'
+        
+        # Calculate overall similarity (weighted average)
+        # Note: These weights will be overridden by user settings
+        overall_sim = (
+            title_sim * 0.30 +
+            h1_sim * 0.20 +
+            semantic_sim * 0.35 +
+            meta_sim * 0.15
+        )
+        
+        return {
+            'title_similarity': title_sim,
+            'h1_similarity': h1_sim,
+            'meta_description_similarity': meta_sim,
+            similarity_type: semantic_sim,
+            'overall_similarity': overall_sim
+        }
+    
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two text strings"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Clean and normalize text
+        text1 = self._normalize_text(text1)
+        text2 = self._normalize_text(text2)
+        
+        # Quick exact match check
+        if text1 == text2:
+            return 1.0
+        
+        # Use TF-IDF for similarity
+        try:
+            tfidf_matrix = self.tfidf_vectorizer.fit_transform([text1, text2])
+            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+            return float(similarity)
+        except:
+            # Fallback to simple word overlap
+            return self._calculate_word_overlap(text1, text2)
+    
+    def _calculate_embedding_similarity(self, embedding1, embedding2) -> float:
+        """Calculate similarity between two embedding vectors"""
+        if embedding1 is None or embedding2 is None:
+            return 0.0
         
         try:
-            summary = await self.ai_provider.analyze(prompt)
-            return summary
+            # Convert to numpy arrays if needed
+            if not isinstance(embedding1, np.ndarray):
+                embedding1 = np.array(embedding1)
+            if not isinstance(embedding2, np.ndarray):
+                embedding2 = np.array(embedding2)
+            
+            # Calculate cosine similarity
+            embedding1 = embedding1.reshape(1, -1)
+            embedding2 = embedding2.reshape(1, -1)
+            
+            similarity = cosine_similarity(embedding1, embedding2)[0][0]
+            return float(similarity)
         except Exception as e:
-            logger.error(f"Error generating executive summary: {e}")
-            return self._generate_fallback_summary(analysis_results, recommendations)
+            logger.error(f"Error calculating embedding similarity: {e}")
+            return 0.0
     
-    def _format_top_issues(self, recommendations: List[Dict]) -> str:
-        """Format top issues for the summary prompt"""
-        formatted = []
-        for i, rec in enumerate(recommendations, 1):
-            formatted.append(f"{i}. {rec.get('primary_issue', 'Issue')} - "
-                           f"Severity: {rec.get('severity', 'unknown')}, "
-                           f"Action: {rec.get('recommended_action', 'review')}")
-        return '\n'.join(formatted)
+    def _calculate_sf_embedding_similarity(self, url1: str, url2: str) -> float:
+        """Calculate similarity using Screaming Frog embeddings"""
+        if self.embeddings_data is None:
+            return 0.0
+        
+        try:
+            # Find embeddings for both URLs
+            url1_embedding = self._get_sf_embedding(url1)
+            url2_embedding = self._get_sf_embedding(url2)
+            
+            if url1_embedding is None or url2_embedding is None:
+                return 0.0
+            
+            return self._calculate_embedding_similarity(url1_embedding, url2_embedding)
+            
+        except Exception as e:
+            logger.error(f"Error with SF embeddings: {e}")
+            return 0.0
     
-    def _generate_fallback_summary(self, analysis_results: Dict, recommendations: List[Dict]) -> str:
-        """Generate a basic summary if AI fails"""
-        high_risk = analysis_results.get('high_risk_count', 0)
-        total_pairs = analysis_results.get('total_pairs', 0)
+    def _get_sf_embedding(self, url: str) -> Optional[np.ndarray]:
+        """Get Screaming Frog embedding for a URL"""
+        try:
+            # Try different URL column names
+            url_columns = ['URL', 'url', 'Address', 'address']
+            
+            for col in url_columns:
+                if col in self.embeddings_data.columns:
+                    # Find the row for this URL
+                    mask = self.embeddings_data[col] == url
+                    if not mask.any():
+                        # Try with normalized URL
+                        normalized_url = url.rstrip('/').lower()
+                        mask = self.embeddings_data[col].str.rstrip('/').str.lower() == normalized_url
+                    
+                    if mask.any():
+                        row = self.embeddings_data[mask].iloc[0]
+                        
+                        # Get embedding columns (all numeric columns except URL)
+                        embedding_cols = [c for c in self.embeddings_data.columns 
+                                        if c not in url_columns and 
+                                        pd.api.types.is_numeric_dtype(self.embeddings_data[c])]
+                        
+                        if embedding_cols:
+                            return row[embedding_cols].values.astype(float)
+            
+            logger.warning(f"No embedding found for URL: {url}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting SF embedding: {e}")
+            return None
+    
+    def _calculate_semantic_similarity_fallback(self, url1_data: pd.Series, url2_data: pd.Series) -> float:
+        """Calculate semantic similarity without embeddings (fallback method)"""
+        # Combine all text fields
+        text1 = ' '.join([
+            str(url1_data.get('title', '')),
+            str(url1_data.get('h1', '')),
+            str(url1_data.get('meta_description', ''))
+        ])
         
-        return f"""
-        ## Executive Summary
+        text2 = ' '.join([
+            str(url2_data.get('title', '')),
+            str(url2_data.get('h1', '')),
+            str(url2_data.get('meta_description', ''))
+        ])
         
-        The content cannibalization analysis identified {total_pairs} instances of potential 
-        content overlap, with {high_risk} requiring immediate attention.
+        return self._calculate_text_similarity(text1, text2)
+    
+    def _normalize_text(self, text: str) -> str:
+        """Normalize text for comparison"""
+        # Convert to lowercase
+        text = text.lower()
         
-        ### Key Findings:
-        - {high_risk} high-risk cannibalization issues that could be impacting rankings
-        - Most common issue: Multiple pages targeting identical keywords
-        - Estimated traffic impact: Significant ranking dilution detected
+        # Remove special characters but keep spaces
+        text = re.sub(r'[^\w\s]', ' ', text)
         
-        ### Recommended Actions:
-        1. Consolidate {high_risk} high-priority page pairs
-        2. Implement content differentiation strategies
-        3. Update internal linking structure
-        4. Monitor performance post-implementation
+        # Remove extra whitespace
+        text = ' '.join(text.split())
         
-        ### Next Steps:
-        Review the detailed recommendations for each cannibalization pair and prioritize 
-        based on traffic potential and current performance metrics.
-        """
+        return text.strip()
+    
+    def _calculate_word_overlap(self, text1: str, text2: str) -> float:
+        """Simple word overlap calculation (Jaccard similarity)"""
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def get_similarity_stats(self, similarity_df: pd.DataFrame) -> Dict:
+        """Get statistics about the similarity analysis"""
+        if similarity_df.empty:
+            return {
+                'avg_title_similarity': 0,
+                'avg_h1_similarity': 0,
+                'avg_semantic_similarity': 0,
+                'high_similarity_count': 0
+            }
+        
+        stats = {
+            'avg_title_similarity': similarity_df['title_similarity'].mean(),
+            'avg_h1_similarity': similarity_df['h1_similarity'].mean(),
+            'avg_semantic_similarity': similarity_df.get('semantic_similarity', 
+                                                       similarity_df.get('content_similarity', 0)).mean(),
+            'high_similarity_count': len(similarity_df[similarity_df['overall_similarity'] > 0.7])
+        }
+        
+        return stats
