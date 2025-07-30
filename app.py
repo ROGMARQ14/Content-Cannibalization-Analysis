@@ -553,6 +553,9 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         
         progress_bar.progress(20, text="Data loaded successfully")
         
+        # Initialize embeddings_data to None
+        embeddings_data = None
+        
         # Step 2.5: Filter by SEO performance if requested
         if filter_params['filter_by_performance']:
             progress_bar.progress(25, text="Filtering by SEO performance...")
@@ -583,9 +586,7 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             This will significantly reduce processing time and focus on impactful cannibalization.
             """)
             
-            # Also filter embeddings if provided
-            if embeddings_file and embeddings_data is not None:
-                embeddings_data = embeddings_data[embeddings_data['URL'].isin(qualified_urls)]
+            # Note: embeddings will be filtered later when loaded
         
         # Step 2: Initialize analyzers
         progress_bar.progress(30, text="Initializing AI analyzer...")
