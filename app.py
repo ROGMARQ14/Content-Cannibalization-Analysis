@@ -10,22 +10,57 @@ import logging
 from typing import Dict, List, Optional, Tuple
 import io
 
-# Import custom modules
-from utils.api_manager import APIManager
-from utils.column_mapper import SmartColumnMapper, FlexibleDataLoader
-from utils.export_handler import ExportHandler
-from modules.analyzers.ai_analyzer import AIAnalyzer
-from modules.analyzers.serp_analyzer import SERPAnalyzer
-from modules.analyzers.ml_scoring import MLScoringEngine
-from modules.analyzers.similarity_analyzer import SimilarityAnalyzer
-from modules.analyzers.content_analyzer import ContentAnalyzer
-from modules.data_loaders.crawler_loader import CrawlerDataLoader
-from modules.data_loaders.gsc_loader import GSCLoader
-from modules.reporting.report_generator import ReportGenerator
+# Import standard libraries first
+import streamlit as st
+import pandas as pd
+import numpy as np
+import asyncio
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+import logging
+from typing import Dict, List, Optional, Tuple
+import io
 
-# Configure logging
+# Configure logging before other imports
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import custom modules with error handling
+try:
+    from utils.api_manager import APIManager
+    from utils.column_mapper import SmartColumnMapper, FlexibleDataLoader
+    from utils.export_handler import ExportHandler
+except ImportError as e:
+    logger.error(f"Error importing utils: {e}")
+    st.error(f"Module import error: {e}")
+    st.stop()
+
+try:
+    from modules.analyzers.ai_analyzer import AIAnalyzer
+    from modules.analyzers.serp_analyzer import SERPAnalyzer
+    from modules.analyzers.ml_scoring import MLScoringEngine
+    from modules.analyzers.similarity_analyzer import SimilarityAnalyzer
+    from modules.analyzers.content_analyzer import ContentAnalyzer
+except ImportError as e:
+    logger.error(f"Error importing analyzers: {e}")
+    st.error(f"Analyzer module import error: {e}")
+    st.stop()
+
+try:
+    from modules.data_loaders.crawler_loader import CrawlerDataLoader
+    from modules.data_loaders.gsc_loader import GSCLoader
+except ImportError as e:
+    logger.error(f"Error importing data loaders: {e}")
+    st.error(f"Data loader import error: {e}")
+    st.stop()
+
+try:
+    from modules.reporting.report_generator import ReportGenerator
+except ImportError as e:
+    logger.error(f"Error importing report generator: {e}")
+    st.error(f"Report generator import error: {e}")
+    st.stop()
 
 # Page configuration
 st.set_page_config(
