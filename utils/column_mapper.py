@@ -199,8 +199,46 @@ class FlexibleDataLoader:
     def load_internal_data(self, file) -> pd.DataFrame:
         """Load internal SEO data with flexible column detection"""
         try:
-            # Read the file
-            df = pd.read_csv(file)
+            # Try different encodings
+            encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+            df = None
+            successful_encoding = None
+            
+            for encoding in encodings:
+                try:
+                    # Reset file pointer to beginning
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding=encoding)
+                    successful_encoding = encoding
+                    break
+                except UnicodeDecodeError:
+                    continue
+                except pd.errors.EmptyDataError:
+                    # File is genuinely empty
+                    raise ValueError("The uploaded file appears to be empty. Please check your file.")
+                except Exception as e:
+                    # Try next encoding
+                    continue
+            
+            if df is None:
+                raise ValueError(
+                    "Could not read the file with any common encoding. "
+                    "Please ensure your CSV file is properly formatted and not corrupted."
+                )
+            
+            logger.info(f"Successfully loaded file with {successful_encoding} encoding")
+            
+            # Check if dataframe is empty
+            if df.empty:
+                raise ValueError("The file was loaded but contains no data.")
+            
+            # Check if dataframe has columns
+            if len(df.columns) == 0:
+                raise ValueError("No columns found in the file. Please check the file format.")
+            
+            # Log column information for debugging
+            logger.info(f"Found {len(df.columns)} columns: {list(df.columns)[:10]}")
+            logger.info(f"Found {len(df)} rows of data")
             
             # Required columns for internal data
             required = ['url', 'title', 'h1', 'meta_description']
@@ -235,8 +273,36 @@ class FlexibleDataLoader:
     def load_gsc_data(self, file) -> pd.DataFrame:
         """Load GSC data with flexible column detection"""
         try:
-            # Read the file
-            df = pd.read_csv(file)
+            # Try different encodings
+            encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+            df = None
+            successful_encoding = None
+            
+            for encoding in encodings:
+                try:
+                    # Reset file pointer to beginning
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding=encoding)
+                    successful_encoding = encoding
+                    break
+                except UnicodeDecodeError:
+                    continue
+                except pd.errors.EmptyDataError:
+                    raise ValueError("The GSC file appears to be empty. Please check your file.")
+                except Exception as e:
+                    continue
+            
+            if df is None:
+                raise ValueError(
+                    "Could not read the GSC file with any common encoding. "
+                    "Please ensure your CSV file is properly formatted."
+                )
+            
+            logger.info(f"Successfully loaded GSC file with {successful_encoding} encoding")
+            
+            # Check if dataframe is empty
+            if df.empty:
+                raise ValueError("The GSC file was loaded but contains no data.")
             
             # Required columns for GSC data
             required = ['url', 'query', 'clicks', 'impressions', 'position']
