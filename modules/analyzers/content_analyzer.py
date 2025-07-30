@@ -11,7 +11,7 @@ from nltk.corpus import stopwords
 from collections import Counter
 import re
 import logging
-from readability import Readability
+from readability.readability import Document as Readability
 import trafilatura
 from urllib.parse import urlparse
 
@@ -200,7 +200,7 @@ class ContentAnalyzer:
     def _extract_with_readability(self, html: str, url: str) -> str:
         """Extract content using readability (good for various content types)"""
         try:
-            doc = Readability(html, url)
+            doc = Readability(html, url=url)
             summary = doc.summary()
             
             # Parse the summary to get text
