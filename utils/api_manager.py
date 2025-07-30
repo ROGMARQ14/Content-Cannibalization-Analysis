@@ -46,12 +46,20 @@ class APIManager:
         
         try:
             for provider, config in APIManager.SUPPORTED_PROVIDERS.items():
+                # Check if the key exists AND is not empty
                 if config['key_name'] in st.secrets:
-                    available[provider] = {
-                        'models': config['models'],
-                        'display_name': config['display_name']
-                    }
-                    logger.info(f"Found API key for {provider}")
+                    key_value = st.secrets[config['key_name']]
+                    # Ensure the key is not empty or just whitespace
+                    if key_value and str(key_value).strip():
+                        available[provider] = {
+                            'models': config['models'],
+                            'display_name': config['display_name']
+                        }
+                        logger.info(f"Found valid API key for {provider}")
+                    else:
+                        logger.warning(f"Empty API key for {provider}")
+                else:
+                    logger.info(f"No API key found for {provider}")
         except Exception as e:
             logger.error(f"Error checking available providers: {e}")
             
@@ -63,7 +71,10 @@ class APIManager:
         try:
             config = APIManager.SUPPORTED_PROVIDERS.get(provider)
             if config and config['key_name'] in st.secrets:
-                return st.secrets[config['key_name']]
+                key_value = st.secrets[config['key_name']]
+                # Return key only if it's not empty
+                if key_value and str(key_value).strip():
+                    return str(key_value).strip()
         except Exception as e:
             logger.error(f"Error retrieving API key for {provider}: {e}")
         return None
