@@ -195,6 +195,29 @@ def main():
         high_threshold = st.slider("High Risk Threshold", 0.0, 1.0, 0.7, 0.05)
         medium_threshold = st.slider("Medium Risk Threshold", 0.0, 1.0, 0.4, 0.05)
         
+        st.divider()
+        
+        # Performance Settings
+        st.subheader("Performance Settings")
+        
+        # Batch size control
+        ai_batch_size = st.slider(
+            "AI Processing Batch Size",
+            min_value=1,
+            max_value=10,
+            value=3,
+            help="Smaller batches use less memory but take longer. Recommended: 3-5 for Streamlit Cloud"
+        )
+        
+        # Concurrent requests control
+        max_concurrent = st.slider(
+            "Max Concurrent API Calls",
+            min_value=1,
+            max_value=5,
+            value=2,
+            help="Lower values prevent timeouts on Streamlit Cloud. Recommended: 2-3"
+        )
+        
         # Content Extraction Settings
         extraction_config = show_content_extraction_settings()
     
@@ -205,7 +228,7 @@ def main():
         with tabs[0]:
             run_analysis_tab(selected_provider, selected_model, weights, 
                            use_serp, use_gsc_oauth, high_threshold, medium_threshold,
-                           extraction_config)
+                           extraction_config, ai_batch_size, max_concurrent)
         
         with tabs[1]:
             show_ai_insights_tab()
@@ -293,7 +316,8 @@ def show_content_extraction_settings():
     return extraction_config
 
 def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth, 
-                    high_threshold, medium_threshold, extraction_config):
+                    high_threshold, medium_threshold, extraction_config,
+                    ai_batch_size, max_concurrent):
     """Run the main analysis"""
     
     st.header("📊 Content Analysis")
@@ -454,7 +478,9 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
                 medium_threshold,
                 extraction_config,
                 analysis_enhancement,
-                content_option
+                content_option,
+                ai_batch_size,
+                max_concurrent
             ))
         else:
             st.error("Please upload both internal SEO data and GSC performance data.")
@@ -466,7 +492,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
 async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model,
                       weights, use_serp, serp_location, min_similarity,
                       high_threshold, medium_threshold, extraction_config,
-                      analysis_enhancement, content_option):
+                      analysis_enhancement, content_option, ai_batch_size, max_concurrent):
     """Run the complete analysis pipeline"""
     
     try:
@@ -497,9 +523,15 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         # Initialize ML scoring engine
         ml_scorer = MLScoringEngine()
         
-        # Step 3: Analyze content intent
+        # Step 3: Analyze content intent with controlled batch size
         progress_bar.progress(40, text="Analyzing content intent with AI...")
-        internal_data = await ai_analyzer.analyze_intent_batch(internal_data)
+        
+        # Limit URLs for Streamlit Cloud if needed
+        if len(internal_data) > 500:
+            st.warning(f"Large dataset detected ({len(internal_data)} URLs). Processing first 500 URLs to prevent timeouts.")
+            internal_data = internal_data.head(500)
+        
+        internal_data = await ai_analyzer.analyze_intent_batch(internal_data, batch_size=ai_batch_size)
         
         # Step 4: Handle embeddings or content analysis
         if analysis_enhancement == "Use Screaming Frog Embeddings" and embeddings_file:
@@ -592,15 +624,20 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
                 **features
             })
         
-        # Step 8: Generate AI recommendations
-        progress_bar.progress(90, text="Generating AI recommendations...")
+        # Step 8: Generate AI recommendations with controlled concurrency
+        progress_bar.progress(80, text="Generating AI recommendations...")
         
         # Filter high and medium risk pairs
         priority_pairs = [p for p in cannibalization_pairs 
                          if p['risk_score'] >= medium_threshold]
         
+        # Limit recommendations for performance
+        max_recommendations = min(50, len(priority_pairs))
+        if len(priority_pairs) > max_recommendations:
+            st.info(f"Generating recommendations for top {max_recommendations} risk pairs")
+        
         recommendations = await ai_analyzer.generate_recommendations(
-            priority_pairs[:50],  # Limit to top 50 for performance
+            priority_pairs[:max_recommendations],
             gsc_data
         )
         
