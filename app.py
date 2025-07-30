@@ -117,6 +117,15 @@ def main():
                     valid_providers[provider] = info
             
             if valid_providers:
+                # Filter out O1 models if they somehow appear
+                for provider in list(valid_providers.keys()):
+                    if provider == 'openai' and 'models' in valid_providers[provider]:
+                        # Remove O1 models
+                        valid_providers[provider]['models'] = {
+                            k: v for k, v in valid_providers[provider]['models'].items() 
+                            if not k.startswith('o1')
+                        }
+                
                 selected_provider = st.selectbox(
                     "AI Provider",
                     options=list(valid_providers.keys()),
