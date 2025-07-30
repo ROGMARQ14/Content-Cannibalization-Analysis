@@ -34,29 +34,42 @@ class AIAnalyzer:
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
-    async def analyze_intent_batch(self, content_data: pd.DataFrame, batch_size: int = 10) -> pd.DataFrame:
+    async def analyze_intent_batch(self, content_data: pd.DataFrame, batch_size: int = 5) -> pd.DataFrame:
         """Analyze content intent using AI in batches"""
         logger.info(f"Analyzing intent for {len(content_data)} URLs using {self.provider_name}/{self.model_name}")
         
         # Prepare prompts
         prompts = []
         for _, row in content_data.iterrows():
-            title = row.get('Title 1', '')
-            h1 = row.get('H1-1', '')
-            meta_desc = row.get('Meta Description 1', '')
+            title = row.get('title', '')
+            h1 = row.get('h1', '')
+            meta_desc = row.get('meta_description', '')
             prompts.append(self.ai_provider.create_intent_prompt(title, h1, meta_desc))
         
-        # Process in batches to avoid rate limits
+        # Process in batches to avoid rate limits and resource constraints
         intents = []
-        for i in range(0, len(prompts), batch_size):
+        total_urls = len(prompts)
+        
+        for i in range(0, total_urls, batch_size):
             batch = prompts[i:i + batch_size]
-            batch_results = await self.ai_provider.batch_analyze(batch)
-            intents.extend(batch_results)
             
-            # Update progress
-            progress = (i + len(batch)) / len(prompts)
-            if hasattr(st, 'progress'):
-                st.progress(progress, text=f"Analyzing intent: {i + len(batch)}/{len(prompts)} URLs")
+            try:
+                # Add delay between batches to prevent overwhelming the system
+                if i > 0:
+                    await asyncio.sleep(1)  # 1 second delay between batches
+                
+                batch_results = await self.ai_provider.batch_analyze(batch)
+                intents.extend(batch_results)
+                
+                # Update progress
+                progress = (i + len(batch)) / total_urls
+                if hasattr(st, 'progress'):
+                    st.progress(progress, text=f"Analyzing intent: {i + len(batch)}/{total_urls} URLs")
+                    
+            except Exception as e:
+                logger.error(f"Error in batch {i//batch_size}: {e}")
+                # Add placeholder intents for failed batch
+                intents.extend(['Unknown'] * len(batch))
         
         # Clean and standardize intents
         content_data['ai_intent'] = [self._standardize_intent(intent) for intent in intents]
