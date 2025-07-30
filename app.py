@@ -110,22 +110,33 @@ def main():
         available_providers = APIManager.get_available_providers()
         
         if available_providers:
-            selected_provider = st.selectbox(
-                "AI Provider",
-                options=list(available_providers.keys()),
-                format_func=lambda x: available_providers[x]['display_name']
-            )
+            # Filter out any empty providers one more time
+            valid_providers = {}
+            for provider, info in available_providers.items():
+                if APIManager.get_api_key(provider):
+                    valid_providers[provider] = info
             
-            model_options = available_providers[selected_provider]['models']
-            selected_model = st.selectbox(
-                "Model",
-                options=list(model_options.keys()),
-                format_func=lambda x: f"{model_options[x]['name']} - {model_options[x]['best_for']}"
-            )
-            
-            # Show model info
-            model_info = APIManager.get_model_info(selected_provider, selected_model)
-            st.info(f"Context window: {model_info['context']:,} tokens")
+            if valid_providers:
+                selected_provider = st.selectbox(
+                    "AI Provider",
+                    options=list(valid_providers.keys()),
+                    format_func=lambda x: valid_providers[x]['display_name']
+                )
+                
+                model_options = valid_providers[selected_provider]['models']
+                selected_model = st.selectbox(
+                    "Model",
+                    options=list(model_options.keys()),
+                    format_func=lambda x: f"{model_options[x]['name']} - {model_options[x]['best_for']}"
+                )
+                
+                # Show model info
+                model_info = APIManager.get_model_info(selected_provider, selected_model)
+                st.info(f"Context window: {model_info['context']:,} tokens")
+            else:
+                st.error("No AI providers with valid API keys found. Please check your Streamlit secrets.")
+                selected_provider = None
+                selected_model = None
         else:
             st.error("No AI providers configured. Please add API keys in Streamlit secrets.")
             selected_provider = None
