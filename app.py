@@ -292,16 +292,36 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
         
         if internal_file:
             try:
-                # Preview with smart column detection
-                loader = FlexibleDataLoader()
-                df_preview = pd.read_csv(internal_file).head(3)
-                with st.expander("📋 Column Detection Preview"):
-                    mapper = SmartColumnMapper()
-                    suggestions = mapper.get_column_suggestions(df_preview)
-                    st.text(suggestions)
-                    st.session_state.internal_data = df_preview
+                # Reset file pointer
+                internal_file.seek(0)
+                # Try to read with different encodings for preview
+                preview_df = None
+                for encoding in ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']:
+                    try:
+                        internal_file.seek(0)
+                        preview_df = pd.read_csv(internal_file, nrows=5, encoding=encoding)
+                        break
+                    except:
+                        continue
+                
+                if preview_df is not None and not preview_df.empty:
+                    with st.expander("📋 File Preview & Column Detection"):
+                        st.write("First 5 rows of your file:")
+                        st.dataframe(preview_df)
+                        
+                        mapper = SmartColumnMapper()
+                        suggestions = mapper.get_column_suggestions(preview_df)
+                        st.text(suggestions)
+                        st.session_state.internal_data = preview_df
+                else:
+                    st.warning("Could not preview the file. It might be empty or have an encoding issue.")
+                    
+                # Reset file pointer for actual processing
+                internal_file.seek(0)
+                
             except Exception as e:
-                st.error(f"Error reading file: {e}")
+                st.error(f"Error previewing file: {str(e)}")
+                st.info("The file might be using a special encoding or format. The analysis will still attempt to process it.")
     
     with col2:
         st.subheader("GSC Performance Data")
