@@ -620,13 +620,21 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         
         cannibalization_pairs = []
         for _, row in similarity_results.iterrows():
+            # Get intent for each URL
+            url1_intent = internal_data[internal_data['url'] == row['url1']]['ai_intent'].iloc[0] if len(internal_data[internal_data['url'] == row['url1']]) > 0 else 'Unknown'
+            url2_intent = internal_data[internal_data['url'] == row['url2']]['ai_intent'].iloc[0] if len(internal_data[internal_data['url'] == row['url2']]) > 0 else 'Unknown'
+            
+            # Get keywords for each URL from GSC data
+            url1_keywords = list(gsc_data[gsc_data['url'] == row['url1']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url1']]) > 0 else []
+            url2_keywords = list(gsc_data[gsc_data['url'] == row['url2']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url2']]) > 0 else []
+            
             # Prepare features for ML scoring
             features = {
-                'title_similarity': row['title_similarity'],
-                'h1_similarity': row['h1_similarity'],
+                'title_similarity': row.get('title_similarity', 0),
+                'h1_similarity': row.get('h1_similarity', 0),
                 'semantic_similarity': row.get('semantic_similarity', row.get('content_similarity', 0)),
                 'keyword_overlap': calculate_keyword_overlap(row, gsc_data),
-                'intent_match': 1 if row['intent1'] == row['intent2'] else 0
+                'intent_match': 1 if url1_intent == url2_intent else 0
             }
             
             if serp_results:
@@ -640,6 +648,10 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
                 'url2': row['url2'],
                 'title1': row.get('title1', ''),
                 'title2': row.get('title2', ''),
+                'intent1': url1_intent,
+                'intent2': url2_intent,
+                'keywords1': url1_keywords[:10],  # Top 10 keywords
+                'keywords2': url2_keywords[:10],  # Top 10 keywords
                 'risk_score': risk_score,
                 'risk_category': ml_scorer.get_risk_category(risk_score),
                 'contributions': contributions,
@@ -697,8 +709,8 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
 
 def calculate_keyword_overlap(row, gsc_data):
     """Calculate keyword overlap between two URLs"""
-    url1_keywords = set(gsc_data[gsc_data['url'] == row['url1']]['query'])
-    url2_keywords = set(gsc_data[gsc_data['url'] == row['url2']]['query'])
+    url1_keywords = set(gsc_data[gsc_data['url'] == row['url1']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url1']]) > 0 else set()
+    url2_keywords = set(gsc_data[gsc_data['url'] == row['url2']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url2']]) > 0 else set()
     
     if not url1_keywords or not url2_keywords:
         return 0.0
