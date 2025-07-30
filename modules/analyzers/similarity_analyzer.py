@@ -23,13 +23,17 @@ class SimilarityAnalyzer:
         """
         self.embeddings_data = embeddings_data
         self.use_content_embeddings = use_content_embeddings
-        self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        self.tfidf_vectorizer = None  # Initialize on first use
+        
+        logger.info(f"SimilarityAnalyzer initialized with embeddings_data: {embeddings_data is not None}, "
+                   f"use_content_embeddings: {use_content_embeddings}")
         
     def calculate_all_similarities(self, 
                                  urls_df: pd.DataFrame, 
                                  min_similarity: float = 0.3) -> pd.DataFrame:
         """Calculate all pairwise similarities between URLs"""
         logger.info(f"Calculating similarities for {len(urls_df)} URLs")
+        logger.info(f"Columns in urls_df: {urls_df.columns.tolist()}")
         
         similarity_pairs = []
         
@@ -39,8 +43,17 @@ class SimilarityAnalyzer:
                 url1_data = urls_df.iloc[i]
                 url2_data = urls_df.iloc[j]
                 
+                # Log first pair for debugging
+                if i == 0 and j == 1:
+                    logger.info(f"Sample URL1 data: {url1_data.to_dict()}")
+                    logger.info(f"Sample URL2 data: {url2_data.to_dict()}")
+                
                 # Calculate individual similarities
                 similarities = self._calculate_pair_similarities(url1_data, url2_data)
+                
+                # Log first similarity calculation
+                if i == 0 and j == 1:
+                    logger.info(f"Sample similarities: {similarities}")
                 
                 # Only keep if above minimum threshold
                 if similarities['overall_similarity'] >= min_similarity:
@@ -64,20 +77,20 @@ class SimilarityAnalyzer:
         
         # Title similarity
         title_sim = self._calculate_text_similarity(
-            url1_data.get('title', ''), 
-            url2_data.get('title', '')
+            str(url1_data.get('title', '')), 
+            str(url2_data.get('title', ''))
         )
         
         # H1 similarity
         h1_sim = self._calculate_text_similarity(
-            url1_data.get('h1', ''), 
-            url2_data.get('h1', '')
+            str(url1_data.get('h1', '')), 
+            str(url2_data.get('h1', ''))
         )
         
         # Meta description similarity
         meta_sim = self._calculate_text_similarity(
-            url1_data.get('meta_description', ''), 
-            url2_data.get('meta_description', '')
+            str(url1_data.get('meta_description', '')), 
+            str(url2_data.get('meta_description', ''))
         )
         
         # Semantic/Content similarity
@@ -123,8 +136,8 @@ class SimilarityAnalyzer:
             return 0.0
         
         # Clean and normalize text
-        text1 = self._normalize_text(text1)
-        text2 = self._normalize_text(text2)
+        text1 = self._normalize_text(str(text1))
+        text2 = self._normalize_text(str(text2))
         
         # Quick exact match check
         if text1 == text2:
@@ -132,6 +145,10 @@ class SimilarityAnalyzer:
         
         # Use TF-IDF for similarity
         try:
+            if self.tfidf_vectorizer is None:
+                self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+            
+            # Fit and transform both texts
             tfidf_matrix = self.tfidf_vectorizer.fit_transform([text1, text2])
             similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
             return float(similarity)
