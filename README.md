@@ -1,4 +1,4 @@
-# 🔍 Enhanced Content Cannibalization Analyzer v2.0
+# 🔍 Content Cannibalization Analyzer v2.0
 
 A **competition-first**, AI-powered tool for identifying and resolving content cannibalization issues at scale. This advanced analyzer helps SEO professionals detect when multiple pages compete for the same keywords, provides actionable recommendations, and generates comprehensive reports.
 
