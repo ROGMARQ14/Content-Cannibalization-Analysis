@@ -14,7 +14,6 @@ from .similarity_detector import SimilarityDetector
 from ..analyzers.ml_scoring import MLScoringEngine
 from ..analyzers.ai_analyzer import AIAnalyzer
 from ..analyzers.serp_analyzer import SERPAnalyzer
-from utils.url_normalizer import URLNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +153,9 @@ class CombinedDetector:
         """Combine and deduplicate results from different detection methods"""
         if not detection_results:
             return pd.DataFrame()
+        
+        # Import here to avoid circular imports
+        from utils.url_normalizer import URLNormalizer
         
         # Concatenate all results
         combined = pd.concat(detection_results, ignore_index=True)
