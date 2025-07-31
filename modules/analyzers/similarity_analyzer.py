@@ -259,8 +259,9 @@ class SimilarityAnalyzer:
     def _get_sf_embedding(self, url: str) -> Optional[np.ndarray]:
         """Get Screaming Frog embedding for a URL"""
         try:
-            # Debug: Show what we're looking for
-            logger.debug(f"Looking for embedding for URL: {url}")
+            # ALWAYS normalize the input URL first
+            normalized_input_url = url.rstrip('/').lower()
+            logger.debug(f"Looking for embedding for URL: {url} (normalized: {normalized_input_url})")
             
             # Try different URL column names
             url_columns = ['URL', 'url', 'Address', 'address', 'Url']
@@ -277,34 +278,35 @@ class SimilarityAnalyzer:
                 logger.error(f"No URL column found in embeddings data. Columns: {self.embeddings_data.columns.tolist()}")
                 return None
             
-            # Try exact match first
-            mask = self.embeddings_data[url_col_found] == url
+            # NORMALIZE ALL URLs in embeddings data for comparison
+            # Create a temporary normalized column if it doesn't exist
+            if '_normalized_url' not in self.embeddings_data.columns:
+                self.embeddings_data['_normalized_url'] = self.embeddings_data[url_col_found].str.rstrip('/').str.lower()
+            
+            # Try to find match using normalized URLs
+            mask = self.embeddings_data['_normalized_url'] == normalized_input_url
             
             if not mask.any():
-                # Try with normalized URL (remove trailing slash, lowercase)
-                normalized_url = url.rstrip('/').lower()
-                mask = self.embeddings_data[url_col_found].str.rstrip('/').str.lower() == normalized_url
+                # Try without protocol as fallback
+                url_without_protocol = normalized_input_url.replace('https://', '').replace('http://', '')
+                mask = self.embeddings_data['_normalized_url'].str.replace('https://', '').str.replace('http://', '') == url_without_protocol
                 
                 if not mask.any():
-                    # Try without protocol
-                    url_without_protocol = url.replace('https://', '').replace('http://', '')
-                    mask = self.embeddings_data[url_col_found].str.replace('https://', '').str.replace('http://', '') == url_without_protocol
-                    
-                    if not mask.any():
-                        logger.warning(f"No embedding found for URL: {url}")
-                        # Debug: Show some sample URLs from embeddings
-                        if len(self.embeddings_data) > 0:
-                            logger.debug("Sample URLs in embeddings data:")
-                            for i in range(min(3, len(self.embeddings_data))):
-                                logger.debug(f"  - {self.embeddings_data.iloc[i][url_col_found]}")
-                        return None
+                    logger.warning(f"No embedding found for URL: {url}")
+                    # Debug: Show some sample normalized URLs from embeddings
+                    if len(self.embeddings_data) > 0:
+                        logger.debug("Sample normalized URLs in embeddings data:")
+                        for i in range(min(3, len(self.embeddings_data))):
+                            logger.debug(f"  - Original: {self.embeddings_data.iloc[i][url_col_found]}")
+                            logger.debug(f"  - Normalized: {self.embeddings_data.iloc[i]['_normalized_url']}")
+                    return None
             
             # Get the row
             row = self.embeddings_data[mask].iloc[0]
             
-            # Get embedding columns (all numeric columns except URL)
+            # Get embedding columns (all numeric columns except URL columns)
             embedding_cols = [c for c in self.embeddings_data.columns 
-                            if c not in url_columns and 
+                            if c not in url_columns + ['_normalized_url'] and 
                             pd.api.types.is_numeric_dtype(self.embeddings_data[c])]
             
             if not embedding_cols:
