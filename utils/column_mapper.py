@@ -342,17 +342,20 @@ class FlexibleDataLoader:
             raise
     
     def _clean_internal_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean internal SEO data with URL normalization"""
+        """Clean internal SEO data with enhanced URL normalization"""
         # Remove any rows with missing URLs
         df = df.dropna(subset=['url'])
         
-        # Clean URLs - NORMALIZE by removing trailing slashes
-        df['url'] = df['url'].str.strip()
-        # Remove trailing slashes from ALL URLs for consistent matching
-        df['url'] = df['url'].str.rstrip('/')
-        
-        # Log URL normalization
-        logger.info("Normalized internal data URLs by removing trailing slashes")
+        # Apply comprehensive URL normalization
+        # Import here to avoid circular imports
+        try:
+            from utils.url_normalizer import URLNormalizer
+            df['url'] = df['url'].apply(URLNormalizer.normalize)
+            logger.info("Applied comprehensive URL normalization to internal data")
+        except ImportError:
+            # Fallback to basic normalization
+            logger.warning("URLNormalizer not available, using basic normalization")
+            df['url'] = df['url'].str.strip().str.rstrip('/')
         
         # Debug: Show sample normalized URLs
         if len(df) > 0:
@@ -369,17 +372,20 @@ class FlexibleDataLoader:
         return df
     
     def _clean_gsc_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean GSC performance data with URL normalization"""
+        """Clean GSC performance data with enhanced URL normalization"""
         # Remove any rows with missing URLs or queries
         df = df.dropna(subset=['url', 'query'])
         
-        # Clean URLs - NORMALIZE by removing trailing slashes
-        df['url'] = df['url'].str.strip()
-        # Remove trailing slashes from ALL URLs for consistent matching
-        df['url'] = df['url'].str.rstrip('/')
-        
-        # Log URL normalization
-        logger.info("Normalized GSC URLs by removing trailing slashes")
+        # Apply comprehensive URL normalization
+        # Import here to avoid circular imports
+        try:
+            from utils.url_normalizer import URLNormalizer
+            df['url'] = df['url'].apply(URLNormalizer.normalize)
+            logger.info("Applied comprehensive URL normalization to GSC data")
+        except ImportError:
+            # Fallback to basic normalization
+            logger.warning("URLNormalizer not available, using basic normalization")
+            df['url'] = df['url'].str.strip().str.rstrip('/')
         
         # Debug: Show sample normalized URLs
         if len(df) > 0:
