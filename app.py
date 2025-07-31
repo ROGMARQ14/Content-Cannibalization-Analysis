@@ -10,18 +10,6 @@ import logging
 from typing import Dict, List, Optional, Tuple
 import io
 
-# Import standard libraries first
-import streamlit as st
-import pandas as pd
-import numpy as np
-import asyncio
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-import logging
-from typing import Dict, List, Optional, Tuple
-import io
-
 # Configure logging before other imports
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -117,6 +105,10 @@ def initialize_session_state():
         st.session_state.serp_data = None
     if 'internal_data' not in st.session_state:
         st.session_state.internal_data = None
+    if 'provider' not in st.session_state:
+        st.session_state.provider = None
+    if 'model' not in st.session_state:
+        st.session_state.model = None
 
 def main():
     """Main application function"""
@@ -173,6 +165,10 @@ def main():
                     options=list(model_options.keys()),
                     format_func=lambda x: f"{model_options[x]['name']} - {model_options[x]['best_for']}"
                 )
+                
+                # Store in session state
+                st.session_state.provider = selected_provider
+                st.session_state.model = selected_model
                 
                 # Show model info
                 model_info = APIManager.get_model_info(selected_provider, selected_model)
@@ -410,6 +406,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
     
     with col2:
         st.subheader("GSC Performance Data")
+        gsc_file = None
         if use_gsc_oauth:
             if st.button("Connect to GSC", key="gsc_connect_btn"):
                 # Handle OAuth flow
@@ -440,6 +437,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
         
         embeddings_file = None
         content_option = None
+        content_column = None
         
         if analysis_enhancement == "Use Screaming Frog Embeddings":
             embeddings_file = st.file_uploader(
@@ -493,6 +491,9 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
             key="min_similarity_threshold"
         )
         
+        # Store in session state for display
+        st.session_state.min_similarity = min_similarity
+        
         # SEO Impact Filter
         filter_by_performance = st.checkbox(
             "Filter by SEO Performance",
@@ -518,6 +519,7 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
             )
     
     with col2:
+        serp_location = "United States"  # Default
         if use_serp:
             serp_location = st.selectbox(
                 "SERP Location",
@@ -553,7 +555,8 @@ def run_analysis_tab(provider, model, weights, use_serp, use_gsc_oauth,
                 content_option,
                 ai_batch_size,
                 processing_delay,
-                filter_params
+                filter_params,
+                content_column  # Pass content_column
             ))
         else:
             st.error("Please upload both internal SEO data and GSC performance data.")
@@ -566,7 +569,7 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
                       weights, use_serp, serp_location, min_similarity,
                       high_threshold, medium_threshold, extraction_config,
                       analysis_enhancement, content_option, ai_batch_size, 
-                      processing_delay, filter_params):
+                      processing_delay, filter_params, content_column=None):
     """Run the complete analysis pipeline"""
     
     try:
@@ -584,7 +587,9 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             gsc_data = loader.load_gsc_data(gsc_file)
         else:
             # Handle OAuth GSC data
-            gsc_data = None  # Placeholder
+            gsc_data = pd.DataFrame()  # Empty placeholder
+            st.error("GSC OAuth integration not yet implemented. Please upload a CSV file.")
+            return
         
         progress_bar.progress(20, text="Data loaded successfully")
         
@@ -592,7 +597,7 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         embeddings_data = None
         
         # Step 2.5: Filter by SEO performance if requested
-        if filter_params['filter_by_performance']:
+        if filter_params['filter_by_performance'] and not gsc_data.empty:
             progress_bar.progress(25, text="Filtering by SEO performance...")
             
             # Get URLs that meet performance criteria
@@ -620,8 +625,6 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
             
             This will significantly reduce processing time and focus on impactful cannibalization.
             """)
-            
-            # Note: embeddings will be filtered later when loaded
         
         # Step 2: Initialize analyzers
         progress_bar.progress(30, text="Initializing AI analyzer...")
@@ -659,6 +662,8 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         internal_data = await ai_analyzer.analyze_intent_batch(internal_data, batch_size=ai_batch_size)
         
         # Step 4: Handle embeddings or content analysis
+        use_content_analysis = False
+        
         if analysis_enhancement == "Use Screaming Frog Embeddings" and embeddings_file:
             progress_bar.progress(50, text="Processing Screaming Frog embeddings...")
             embeddings_data = pd.read_csv(embeddings_file)
@@ -675,19 +680,16 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
                     fetch_content=True,
                     extraction_config=extraction_config
                 )
-            elif content_option == "Content in crawler export":
+            elif content_option == "Content in crawler export" and content_column:
                 # Use existing column
                 internal_data = await content_analyzer.analyze_content_similarity(
                     internal_data,
                     fetch_content=False,
-                    content_column=content_column if 'content_column' in locals() else None
+                    content_column=content_column
                 )
             
             embeddings_data = None
             use_content_analysis = True
-        else:
-            embeddings_data = None
-            use_content_analysis = False
         
         # Step 5: Calculate similarities
         progress_bar.progress(60, text="Calculating content similarities...")
@@ -709,17 +711,18 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         
         # Step 6: SERP analysis (if enabled)
         serp_results = None
-        if use_serp and APIManager.has_serper_api():
+        if use_serp and APIManager.has_serper_api() and not gsc_data.empty:
             progress_bar.progress(70, text="Analyzing SERP overlap...")
             
             # Extract keywords from GSC data
             keywords = gsc_data.groupby('query')['clicks'].sum().nlargest(100).index.tolist()
             
             # Get domain from internal data
-            domain = internal_data['url'].iloc[0].split('/')[2]
-            
-            serper_key = APIManager.get_serper_api_key()
-            async with SERPAnalyzer(serper_key) as serp_analyzer:
+            if len(internal_data) > 0:
+                domain = internal_data['url'].iloc[0].split('/')[2]
+                
+                serper_key = APIManager.get_serper_api_key()
+                serp_analyzer = SERPAnalyzer(serper_key)
                 serp_results = await serp_analyzer.check_serp_overlap(
                     keywords, domain, serp_location
                 )
@@ -787,10 +790,12 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
         if len(priority_pairs) > max_recommendations:
             st.info(f"Generating recommendations for top {max_recommendations} risk pairs")
         
-        recommendations = await ai_analyzer.generate_recommendations(
-            priority_pairs[:max_recommendations],
-            gsc_data
-        )
+        recommendations = []
+        if priority_pairs:
+            recommendations = await ai_analyzer.generate_recommendations(
+                priority_pairs[:max_recommendations],
+                gsc_data
+            )
         
         # Step 9: Prepare final results
         progress_bar.progress(95, text="Preparing results...")
@@ -826,6 +831,9 @@ async def run_analysis(internal_file, gsc_file, embeddings_file, provider, model
 
 def calculate_keyword_overlap(row, gsc_data):
     """Calculate keyword overlap between two URLs"""
+    if gsc_data.empty:
+        return 0.0
+        
     url1_keywords = set(gsc_data[gsc_data['url'] == row['url1']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url1']]) > 0 else set()
     url2_keywords = set(gsc_data[gsc_data['url'] == row['url2']]['query'].unique()) if len(gsc_data[gsc_data['url'] == row['url2']]) > 0 else set()
     
@@ -839,6 +847,9 @@ def calculate_keyword_overlap(row, gsc_data):
 
 def get_serp_overlap_score(row, serp_results):
     """Get SERP overlap score for a URL pair"""
+    if not serp_results:
+        return 0.0
+        
     keyword_overlaps = serp_results.get('keyword_overlaps', {})
     
     # Find keywords where both URLs appear
@@ -902,12 +913,6 @@ def display_analysis_results():
         
         # Convert pairs to DataFrame for display
         pairs_df = pd.DataFrame(results['pairs'])
-    
-    # Create tabs for different export types
-    export_tabs = st.tabs(["Quick Export", "Custom Report", "Bulk Export"])
-    
-    with export_tabs[0]:
-        st.subheader("Quick Export Options")
         
         # Check if required columns exist
         if 'risk_score' in pairs_df.columns and 'risk_category' in pairs_df.columns:
@@ -935,19 +940,20 @@ def display_analysis_results():
         else:
             st.error("Analysis results are missing required data. Please re-run the analysis.")
     else:
-        st.warning("""
+        min_sim = st.session_state.get('min_similarity', 0.3)
+        st.warning(f"""
         🔍 **No cannibalization issues detected!**
         
         This could mean:
         1. Your content is well-differentiated
-        2. The similarity threshold is too high (current: {:.0%})
+        2. The similarity threshold is too high (current: {min_sim:.0%})
         3. The performance filter excluded too many URLs
         
         Try:
         - Lowering the similarity threshold
         - Adjusting the performance filter settings
         - Checking if embeddings are properly loaded
-        """.format(st.session_state.get('min_similarity', 0.3)))
+        """)
 
 def show_ai_insights_tab():
     """Display AI-generated insights"""
@@ -991,17 +997,24 @@ def show_ai_insights_tab():
         st.divider()
         if st.button("Generate Executive Summary", key="exec_summary_btn"):
             with st.spinner("Generating AI summary..."):
-                ai_analyzer = AIAnalyzer(
-                    st.session_state.get('provider'), 
-                    st.session_state.get('model'),
-                    APIManager.get_api_key(st.session_state.get('provider'))
-                )
-                summary = asyncio.run(ai_analyzer.generate_executive_summary(
-                    st.session_state.analysis_results,
-                    recommendations
-                ))
-                st.markdown("### 📋 Executive Summary")
-                st.markdown(summary)
+                provider = st.session_state.get('provider')
+                model = st.session_state.get('model')
+                if provider and model:
+                    ai_analyzer = AIAnalyzer(
+                        provider, 
+                        model,
+                        APIManager.get_api_key(provider)
+                    )
+                    summary = asyncio.run(ai_analyzer.generate_executive_summary(
+                        st.session_state.analysis_results,
+                        recommendations
+                    ))
+                    st.markdown("### 📋 Executive Summary")
+                    st.markdown(summary)
+                else:
+                    st.error("AI provider information not found. Please re-run the analysis.")
+    else:
+        st.info("No recommendations available. This might be because no cannibalization issues were found.")
 
 def generate_reports_tab():
     """Generate and download reports without resetting the app"""
@@ -1025,6 +1038,12 @@ def generate_reports_tab():
         return
     
     pairs_df = pd.DataFrame(results['pairs'])
+    
+    # Create tabs for different export types
+    export_tabs = st.tabs(["Quick Export", "Custom Report", "Bulk Export"])
+    
+    with export_tabs[0]:
+        st.subheader("Quick Export Options")
         
         # Ensure risk_category column exists in pairs_df
         if 'risk_category' not in pairs_df.columns and 'risk_score' in pairs_df.columns:
@@ -1045,31 +1064,39 @@ def generate_reports_tab():
             
         if not high_risk_df.empty:
             st.markdown("### 🔴 High Risk Pairs")
-            ExportHandler.export_with_state_preservation(
-                'high_risk',
-                high_risk_df[['url1', 'url2', 'risk_score', 'title_similarity', 'semantic_similarity']],
-                'high_risk_cannibalization.csv',
-                'csv'
+            # Use st.download_button directly instead of ExportHandler
+            csv_data = high_risk_df[['url1', 'url2', 'risk_score', 'title_similarity', 'semantic_similarity']].to_csv(index=False)
+            st.download_button(
+                label="Download High Risk Pairs (CSV)",
+                data=csv_data,
+                file_name='high_risk_cannibalization.csv',
+                mime='text/csv'
             )
         
         # All pairs
         st.markdown("### 📊 All Cannibalization Pairs")
-        ExportHandler.export_with_state_preservation(
-            'all_pairs',
-            pairs_df,
-            'all_cannibalization_pairs.xlsx',
-            'xlsx'
+        # Export as Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            pairs_df.to_excel(writer, sheet_name='All Pairs', index=False)
+        
+        st.download_button(
+            label="Download All Pairs (Excel)",
+            data=output.getvalue(),
+            file_name='all_cannibalization_pairs.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
         
         # Recommendations
         if st.session_state.recommendations:
             st.markdown("### 💡 AI Recommendations")
             rec_df = pd.DataFrame(st.session_state.recommendations)
-            ExportHandler.export_with_state_preservation(
-                'recommendations',
-                rec_df,
-                'ai_recommendations.csv',
-                'csv'
+            csv_data = rec_df.to_csv(index=False)
+            st.download_button(
+                label="Download AI Recommendations (CSV)",
+                data=csv_data,
+                file_name='ai_recommendations.csv',
+                mime='text/csv'
             )
     
     with export_tabs[1]:
@@ -1121,7 +1148,7 @@ def generate_reports_tab():
                     
                     # SERP data
                     if st.session_state.serp_data:
-                        serp_summary = pd.DataFrame([st.session_state.serp_data['summary']])
+                        serp_summary = pd.DataFrame([st.session_state.serp_data.get('summary', {})])
                         serp_summary.to_excel(writer, sheet_name='SERP Summary', index=False)
                 
                 # Download without rerun
