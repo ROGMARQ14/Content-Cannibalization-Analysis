@@ -7,11 +7,13 @@ from .serp_analyzer import SERPAnalyzer
 from .ml_scoring import MLScoringEngine
 from .similarity_analyzer import SimilarityAnalyzer
 from .content_analyzer import ContentAnalyzer
+from .keyword_analyzer import KeywordAnalyzer
 
 __all__ = [
     'AIAnalyzer',
     'SERPAnalyzer', 
     'MLScoringEngine',
     'SimilarityAnalyzer',
-    'ContentAnalyzer'
+    'ContentAnalyzer',
+    'KeywordAnalyzer'
 ]
