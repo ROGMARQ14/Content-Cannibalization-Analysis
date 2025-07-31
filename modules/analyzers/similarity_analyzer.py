@@ -6,6 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import logging
 from typing import Dict, List, Optional, Tuple
 import re
+from utils.url_normalizer import URLNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -23,31 +24,61 @@ class SimilarityAnalyzer:
         """
         self.embeddings_data = embeddings_data
         self.use_content_embeddings = use_content_embeddings
-        self.tfidf_vectorizer = None  # Initialize on first use
+        self.tfidf_vectorizer = None
         
-        logger.info(f"SimilarityAnalyzer initialized with embeddings_data: {embeddings_data is not None}, "
-                   f"use_content_embeddings: {use_content_embeddings}")
+        # Prepare embeddings data if provided
+        if self.embeddings_data is not None:
+            self._prepare_embeddings_data()
         
-        # Debug embeddings data
-        if embeddings_data is not None:
-            logger.info(f"Embeddings data shape: {embeddings_data.shape}")
-            logger.info(f"Embeddings columns: {embeddings_data.columns.tolist()}")
-            if len(embeddings_data) > 0:
-                logger.info(f"Sample embedding URL: {embeddings_data.iloc[0].get('URL', embeddings_data.iloc[0].get('url', 'No URL column'))}")
+        logger.info(f"SimilarityAnalyzer initialized with embeddings: {embeddings_data is not None}, "
+                   f"use_content: {use_content_embeddings}")
+    
+    def _prepare_embeddings_data(self):
+        """Prepare embeddings data with normalized URLs"""
+        # Find URL column
+        url_columns = ['URL', 'url', 'Address', 'address', 'Url']
+        url_col = None
         
+        for col in url_columns:
+            if col in self.embeddings_data.columns:
+                url_col = col
+                break
+        
+        if not url_col:
+            logger.error(f"No URL column found in embeddings. Columns: {self.embeddings_data.columns.tolist()}")
+            return
+        
+        # Normalize URLs for matching
+        self.embeddings_data['url_normalized'] = self.embeddings_data[url_col].apply(
+            URLNormalizer.normalize_for_matching
+        )
+        
+        # Create lookup dictionary for faster access
+        self.embeddings_lookup = {}
+        
+        for idx, row in self.embeddings_data.iterrows():
+            normalized_url = row['url_normalized']
+            
+            # Get embedding columns (numeric columns)
+            embedding_cols = [c for c in self.embeddings_data.columns 
+                            if c not in url_columns + ['url_normalized'] and 
+                            pd.api.types.is_numeric_dtype(self.embeddings_data[c])]
+            
+            if embedding_cols:
+                self.embeddings_lookup[normalized_url] = row[embedding_cols].values.astype(float)
+        
+        logger.info(f"Prepared {len(self.embeddings_lookup)} embeddings for matching")
+    
     def calculate_all_similarities(self, 
                                  urls_df: pd.DataFrame, 
                                  min_similarity: float = 0.3) -> pd.DataFrame:
         """Calculate all pairwise similarities between URLs"""
         logger.info(f"Calculating similarities for {len(urls_df)} URLs")
-        logger.info(f"Columns in urls_df: {urls_df.columns.tolist()}")
         logger.info(f"Minimum similarity threshold: {min_similarity}")
         
-        # Debug: Show sample URLs
-        if len(urls_df) > 0:
-            logger.info(f"Sample URLs from internal data:")
-            for i in range(min(3, len(urls_df))):
-                logger.info(f"  - {urls_df.iloc[i]['url']}")
+        # Ensure URLs are normalized in the input data
+        if 'url_normalized' not in urls_df.columns:
+            urls_df['url_normalized'] = urls_df['url'].apply(URLNormalizer.normalize_for_matching)
         
         similarity_pairs = []
         total_comparisons = 0
@@ -60,24 +91,10 @@ class SimilarityAnalyzer:
                 url1_data = urls_df.iloc[i]
                 url2_data = urls_df.iloc[j]
                 
-                # Log first pair for debugging
-                if i == 0 and j == 1:
-                    logger.info(f"Sample URL1 data: {url1_data.to_dict()}")
-                    logger.info(f"Sample URL2 data: {url2_data.to_dict()}")
-                
-                # Calculate individual similarities
+                # Calculate similarities
                 similarities = self._calculate_pair_similarities(url1_data, url2_data)
                 
-                # Log first similarity calculation
-                if i == 0 and j == 1:
-                    logger.info(f"Sample similarities: {similarities}")
-                
-                # Debug: Log some similarity scores
-                if total_comparisons <= 5:
-                    logger.info(f"Pair {total_comparisons}: {url1_data['url'][:50]} vs {url2_data['url'][:50]}")
-                    logger.info(f"  Overall similarity: {similarities['overall_similarity']:.3f}")
-                
-                # Check if above minimum threshold
+                # Check threshold
                 if similarities['overall_similarity'] >= min_similarity:
                     above_threshold += 1
                     pair_data = {
@@ -91,32 +108,7 @@ class SimilarityAnalyzer:
                     }
                     similarity_pairs.append(pair_data)
         
-        logger.info(f"Total comparisons made: {total_comparisons}")
-        logger.info(f"Pairs above threshold ({min_similarity}): {above_threshold}")
-        logger.info(f"Found {len(similarity_pairs)} pairs above {min_similarity} similarity threshold")
-        
-        # Debug: Show distribution of similarities
-        if total_comparisons > 0:
-            all_sims = []
-            for i in range(len(urls_df)):
-                for j in range(i + 1, len(urls_df)):
-                    url1_data = urls_df.iloc[i]
-                    url2_data = urls_df.iloc[j]
-                    sims = self._calculate_pair_similarities(url1_data, url2_data)
-                    all_sims.append(sims['overall_similarity'])
-            
-            if all_sims:
-                logger.info(f"Similarity distribution:")
-                logger.info(f"  Min: {min(all_sims):.3f}")
-                logger.info(f"  Max: {max(all_sims):.3f}")
-                logger.info(f"  Mean: {np.mean(all_sims):.3f}")
-                logger.info(f"  Median: {np.median(all_sims):.3f}")
-                
-                # Show how many fall into different ranges
-                ranges = [(0, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 1.0)]
-                for low, high in ranges:
-                    count = sum(1 for s in all_sims if low <= s < high)
-                    logger.info(f"  {low:.1f}-{high:.1f}: {count} pairs")
+        logger.info(f"Total comparisons: {total_comparisons}, Above threshold: {above_threshold}")
         
         return pd.DataFrame(similarity_pairs)
     
@@ -141,34 +133,27 @@ class SimilarityAnalyzer:
             str(url2_data.get('meta_description', ''))
         )
         
-        # Debug log for text similarities
-        logger.debug(f"Text similarities - Title: {title_sim:.3f}, H1: {h1_sim:.3f}, Meta: {meta_sim:.3f}")
-        
         # Semantic/Content similarity
         if self.use_content_embeddings and 'content_embedding' in url1_data.index:
-            # Use content embeddings from our content analysis
+            # Use content embeddings from content analysis
             semantic_sim = self._calculate_embedding_similarity(
                 url1_data.get('content_embedding'),
                 url2_data.get('content_embedding')
             )
             similarity_type = 'content_similarity'
-            logger.debug(f"Using content embeddings, similarity: {semantic_sim:.3f}")
-        elif self.embeddings_data is not None:
-            # Use Screaming Frog embeddings
-            semantic_sim = self._calculate_sf_embedding_similarity(
-                url1_data['url'],
-                url2_data['url']
+        elif self.embeddings_lookup:
+            # Use Screaming Frog embeddings with improved matching
+            semantic_sim = self._calculate_embeddings_similarity_improved(
+                url1_data.get('url_normalized', url1_data['url']),
+                url2_data.get('url_normalized', url2_data['url'])
             )
             similarity_type = 'semantic_similarity'
-            logger.debug(f"Using SF embeddings, similarity: {semantic_sim:.3f}")
         else:
             # Fallback to text-based semantic similarity
             semantic_sim = self._calculate_semantic_similarity_fallback(url1_data, url2_data)
             similarity_type = 'semantic_similarity'
-            logger.debug(f"Using fallback semantic similarity: {semantic_sim:.3f}")
         
         # Calculate overall similarity (weighted average)
-        # Note: These weights will be overridden by user settings
         overall_sim = (
             title_sim * 0.30 +
             h1_sim * 0.20 +
@@ -199,16 +184,61 @@ class SimilarityAnalyzer:
         
         # Use TF-IDF for similarity
         try:
-            # Create new vectorizer for each comparison to avoid state issues
             vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
-            
-            # Fit and transform both texts
             tfidf_matrix = vectorizer.fit_transform([text1, text2])
             similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
             return float(similarity)
         except:
-            # Fallback to simple word overlap
+            # Fallback to word overlap
             return self._calculate_word_overlap(text1, text2)
+    
+    def _calculate_embeddings_similarity_improved(self, url1_norm: str, url2_norm: str) -> float:
+        """Calculate similarity using embeddings with improved URL matching"""
+        # Try direct lookup first
+        embedding1 = self.embeddings_lookup.get(url1_norm)
+        embedding2 = self.embeddings_lookup.get(url2_norm)
+        
+        # If direct lookup fails, try variations
+        if embedding1 is None:
+            embedding1 = self._find_embedding_fuzzy(url1_norm)
+        if embedding2 is None:
+            embedding2 = self._find_embedding_fuzzy(url2_norm)
+        
+        if embedding1 is None or embedding2 is None:
+            logger.debug(f"No embeddings found for: {url1_norm} or {url2_norm}")
+            return 0.0
+        
+        return self._calculate_embedding_similarity(embedding1, embedding2)
+    
+    def _find_embedding_fuzzy(self, normalized_url: str) -> Optional[np.ndarray]:
+        """Try to find embedding with fuzzy matching"""
+        # Try exact match first
+        if normalized_url in self.embeddings_lookup:
+            return self.embeddings_lookup[normalized_url]
+        
+        # Try without domain variations
+        url_parts = normalized_url.split('/')
+        if len(url_parts) > 1:
+            # Try path only
+            path_only = '/'.join(url_parts[1:])
+            for stored_url, embedding in self.embeddings_lookup.items():
+                if stored_url.endswith(path_only):
+                    logger.debug(f"Fuzzy matched {normalized_url} to {stored_url}")
+                    return embedding
+        
+        # Try with common variations
+        variations = [
+            normalized_url.rstrip('/'),
+            normalized_url + '/',
+            normalized_url.replace('http://', 'https://'),
+            normalized_url.replace('https://', 'http://')
+        ]
+        
+        for variant in variations:
+            if variant in self.embeddings_lookup:
+                return self.embeddings_lookup[variant]
+        
+        return None
     
     def _calculate_embedding_similarity(self, embedding1, embedding2) -> float:
         """Calculate similarity between two embedding vectors"""
@@ -222,103 +252,21 @@ class SimilarityAnalyzer:
             if not isinstance(embedding2, np.ndarray):
                 embedding2 = np.array(embedding2)
             
+            # Ensure same shape
+            if embedding1.shape != embedding2.shape:
+                logger.warning(f"Embedding shape mismatch: {embedding1.shape} vs {embedding2.shape}")
+                return 0.0
+            
             # Calculate cosine similarity
             embedding1 = embedding1.reshape(1, -1)
             embedding2 = embedding2.reshape(1, -1)
             
             similarity = cosine_similarity(embedding1, embedding2)[0][0]
-            return float(similarity)
+            return float(max(0, similarity))  # Ensure non-negative
+            
         except Exception as e:
             logger.error(f"Error calculating embedding similarity: {e}")
             return 0.0
-    
-    def _calculate_sf_embedding_similarity(self, url1: str, url2: str) -> float:
-        """Calculate similarity using Screaming Frog embeddings"""
-        if self.embeddings_data is None:
-            return 0.0
-        
-        try:
-            # Find embeddings for both URLs
-            url1_embedding = self._get_sf_embedding(url1)
-            url2_embedding = self._get_sf_embedding(url2)
-            
-            if url1_embedding is None or url2_embedding is None:
-                # Log which URL is missing
-                if url1_embedding is None:
-                    logger.debug(f"No embedding for URL1: {url1}")
-                if url2_embedding is None:
-                    logger.debug(f"No embedding for URL2: {url2}")
-                return 0.0
-            
-            return self._calculate_embedding_similarity(url1_embedding, url2_embedding)
-            
-        except Exception as e:
-            logger.error(f"Error with SF embeddings: {e}")
-            return 0.0
-    
-    def _get_sf_embedding(self, url: str) -> Optional[np.ndarray]:
-        """Get Screaming Frog embedding for a URL"""
-        try:
-            # ALWAYS normalize the input URL first
-            normalized_input_url = url.rstrip('/').lower()
-            logger.debug(f"Looking for embedding for URL: {url} (normalized: {normalized_input_url})")
-            
-            # Try different URL column names
-            url_columns = ['URL', 'url', 'Address', 'address', 'Url']
-            
-            # Find which column contains URLs in embeddings data
-            url_col_found = None
-            for col in url_columns:
-                if col in self.embeddings_data.columns:
-                    url_col_found = col
-                    logger.debug(f"Found URL column: {col}")
-                    break
-            
-            if not url_col_found:
-                logger.error(f"No URL column found in embeddings data. Columns: {self.embeddings_data.columns.tolist()}")
-                return None
-            
-            # NORMALIZE ALL URLs in embeddings data for comparison
-            # Create a temporary normalized column if it doesn't exist
-            if '_normalized_url' not in self.embeddings_data.columns:
-                self.embeddings_data['_normalized_url'] = self.embeddings_data[url_col_found].str.rstrip('/').str.lower()
-            
-            # Try to find match using normalized URLs
-            mask = self.embeddings_data['_normalized_url'] == normalized_input_url
-            
-            if not mask.any():
-                # Try without protocol as fallback
-                url_without_protocol = normalized_input_url.replace('https://', '').replace('http://', '')
-                mask = self.embeddings_data['_normalized_url'].str.replace('https://', '').str.replace('http://', '') == url_without_protocol
-                
-                if not mask.any():
-                    logger.warning(f"No embedding found for URL: {url}")
-                    # Debug: Show some sample normalized URLs from embeddings
-                    if len(self.embeddings_data) > 0:
-                        logger.debug("Sample normalized URLs in embeddings data:")
-                        for i in range(min(3, len(self.embeddings_data))):
-                            logger.debug(f"  - Original: {self.embeddings_data.iloc[i][url_col_found]}")
-                            logger.debug(f"  - Normalized: {self.embeddings_data.iloc[i]['_normalized_url']}")
-                    return None
-            
-            # Get the row
-            row = self.embeddings_data[mask].iloc[0]
-            
-            # Get embedding columns (all numeric columns except URL columns)
-            embedding_cols = [c for c in self.embeddings_data.columns 
-                            if c not in url_columns + ['_normalized_url'] and 
-                            pd.api.types.is_numeric_dtype(self.embeddings_data[c])]
-            
-            if not embedding_cols:
-                logger.error("No numeric columns found for embeddings")
-                return None
-            
-            logger.debug(f"Found {len(embedding_cols)} embedding columns")
-            return row[embedding_cols].values.astype(float)
-            
-        except Exception as e:
-            logger.error(f"Error getting SF embedding: {e}")
-            return None
     
     def _calculate_semantic_similarity_fallback(self, url1_data: pd.Series, url2_data: pd.Series) -> float:
         """Calculate semantic similarity without embeddings (fallback method)"""

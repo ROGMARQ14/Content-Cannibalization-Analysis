@@ -1,0 +1,263 @@
+# utils/url_normalizer.py
+"""
+Enhanced URL normalization for robust matching across different data sources
+"""
+import re
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+from typing import Optional, List, Set
+import logging
+
+logger = logging.getLogger(__name__)
+
+class URLNormalizer:
+    """Advanced URL normalization for cannibalization detection"""
+    
+    # Parameters that typically don't affect content
+    IGNORABLE_PARAMS = {
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+        'gclid', 'fbclid', 'msclkid', 'ref', 'source', 'share', 
+        '_ga', '_gl', 'mc_cid', 'mc_eid', 'wickedsource', 'wickedid',
+        'otm_source', 'otm_medium', 'otm_campaign', 'hsa_cam', 'hsa_grp',
+        'hsa_mt', 'hsa_src', 'hsa_ad', 'hsa_acc', 'hsa_net', 'hsa_kw',
+        'hsa_tgt', 'hsa_ver', '_ke', 'k_clickid'
+    }
+    
+    # Parameters that might affect content
+    CONTENT_PARAMS = {
+        'id', 'page', 'p', 'cat', 'category', 'tag', 'filter', 'sort',
+        'view', 'variant', 'version', 'lang', 'language', 'region'
+    }
+    
+    @staticmethod
+    def normalize(url: str, 
+                  preserve_fragment: bool = False,
+                  preserve_params: Optional[Set[str]] = None) -> str:
+        """
+        Normalize URL for consistent matching
+        
+        Args:
+            url: URL to normalize
+            preserve_fragment: Whether to keep hash fragments
+            preserve_params: Set of parameter names to preserve
+            
+        Returns:
+            Normalized URL string
+        """
+        if not url:
+            return ""
+        
+        # Handle URLs without protocol
+        if not url.startswith(('http://', 'https://', '//')):
+            url = 'https://' + url
+        
+        try:
+            # Parse URL
+            parsed = urlparse(url.lower().strip())
+            
+            # Normalize domain
+            domain = parsed.netloc
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            
+            # Normalize path
+            path = parsed.path
+            # Remove duplicate slashes
+            path = re.sub(r'/+', '/', path)
+            # Remove trailing slash unless it's root
+            if len(path) > 1 and path.endswith('/'):
+                path = path[:-1]
+            # Remove index files
+            path = re.sub(r'/index\.(html?|php|aspx?)$', '', path, flags=re.IGNORECASE)
+            
+            # Handle parameters
+            if parsed.query:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                
+                # Determine which params to keep
+                if preserve_params is None:
+                    # Default: keep content-affecting params only
+                    preserve_params = URLNormalizer.CONTENT_PARAMS
+                
+                # Filter parameters
+                filtered_params = {}
+                for key, values in params.items():
+                    if key in preserve_params and key not in URLNormalizer.IGNORABLE_PARAMS:
+                        # Sort values for consistency
+                        filtered_params[key] = sorted(values)
+                
+                # Rebuild query string with sorted keys
+                if filtered_params:
+                    query = urlencode(filtered_params, doseq=True)
+                else:
+                    query = ''
+            else:
+                query = ''
+            
+            # Handle fragment
+            fragment = parsed.fragment if preserve_fragment else ''
+            
+            # Reconstruct URL
+            normalized = urlunparse((
+                'https',  # Always use https for consistency
+                domain,
+                path,
+                '',  # params (obsolete)
+                query,
+                fragment
+            ))
+            
+            return normalized
+            
+        except Exception as e:
+            logger.error(f"Error normalizing URL {url}: {e}")
+            # Return lowercase URL as fallback
+            return url.lower().strip().rstrip('/')
+    
+    @staticmethod
+    def normalize_for_matching(url: str) -> str:
+        """
+        Aggressive normalization for matching URLs across different sources
+        Removes protocol, www, parameters, and trailing slashes
+        """
+        if not url:
+            return ""
+        
+        try:
+            parsed = urlparse(url.lower().strip())
+            
+            # Get domain without www
+            domain = parsed.netloc
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            
+            # Get path without trailing slash
+            path = parsed.path.rstrip('/')
+            
+            # Remove common index files
+            path = re.sub(r'/index\.(html?|php|aspx?)$', '', path, flags=re.IGNORECASE)
+            
+            # Return domain + path only
+            return domain + path
+            
+        except Exception:
+            # Fallback to simple normalization
+            return url.lower().strip().rstrip('/')
+    
+    @staticmethod
+    def get_url_variations(url: str) -> List[str]:
+        """
+        Generate common URL variations for fuzzy matching
+        """
+        variations = set()
+        
+        # Add original
+        variations.add(url)
+        
+        # Add normalized version
+        normalized = URLNormalizer.normalize(url)
+        variations.add(normalized)
+        
+        # Add version for matching
+        matching = URLNormalizer.normalize_for_matching(url)
+        variations.add(matching)
+        
+        try:
+            parsed = urlparse(url)
+            
+            # With and without www
+            if parsed.netloc.startswith('www.'):
+                no_www = url.replace('://www.', '://', 1)
+                variations.add(no_www)
+            else:
+                with_www = url.replace('://', '://www.', 1)
+                variations.add(with_www)
+            
+            # With and without trailing slash
+            if url.endswith('/'):
+                variations.add(url[:-1])
+            else:
+                variations.add(url + '/')
+            
+            # HTTP and HTTPS versions
+            if url.startswith('https://'):
+                variations.add(url.replace('https://', 'http://', 1))
+            elif url.startswith('http://'):
+                variations.add(url.replace('http://', 'https://', 1))
+                
+        except Exception:
+            pass
+        
+        return list(variations)
+    
+    @staticmethod
+    def are_urls_equivalent(url1: str, url2: str, 
+                           strict: bool = False) -> bool:
+        """
+        Check if two URLs are equivalent after normalization
+        
+        Args:
+            url1: First URL
+            url2: Second URL
+            strict: If True, use standard normalization. If False, use matching normalization
+            
+        Returns:
+            True if URLs are equivalent
+        """
+        if strict:
+            return URLNormalizer.normalize(url1) == URLNormalizer.normalize(url2)
+        else:
+            return URLNormalizer.normalize_for_matching(url1) == URLNormalizer.normalize_for_matching(url2)
+    
+    @staticmethod
+    def extract_url_features(url: str) -> dict:
+        """
+        Extract features from URL for similarity analysis
+        """
+        features = {
+            'domain': '',
+            'subdomain': '',
+            'path': '',
+            'path_depth': 0,
+            'has_params': False,
+            'param_count': 0,
+            'is_homepage': False,
+            'file_extension': '',
+            'slug': ''
+        }
+        
+        try:
+            parsed = urlparse(url)
+            
+            # Domain and subdomain
+            domain_parts = parsed.netloc.split('.')
+            if len(domain_parts) > 2:
+                features['subdomain'] = domain_parts[0]
+                features['domain'] = '.'.join(domain_parts[-2:])
+            else:
+                features['domain'] = parsed.netloc
+            
+            # Path analysis
+            path = parsed.path.strip('/')
+            features['path'] = path
+            features['path_depth'] = path.count('/') + 1 if path else 0
+            features['is_homepage'] = path == ''
+            
+            # Extract slug (last path component)
+            if path:
+                path_parts = path.split('/')
+                features['slug'] = path_parts[-1]
+                
+                # Check for file extension
+                if '.' in path_parts[-1]:
+                    features['file_extension'] = path_parts[-1].split('.')[-1]
+            
+            # Parameters
+            if parsed.query:
+                params = parse_qs(parsed.query)
+                features['has_params'] = True
+                features['param_count'] = len(params)
+                
+        except Exception as e:
+            logger.error(f"Error extracting features from {url}: {e}")
+        
+        return features
