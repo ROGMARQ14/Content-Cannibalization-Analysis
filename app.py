@@ -902,6 +902,12 @@ def display_analysis_results():
         
         # Convert pairs to DataFrame for display
         pairs_df = pd.DataFrame(results['pairs'])
+    
+    # Create tabs for different export types
+    export_tabs = st.tabs(["Quick Export", "Custom Report", "Bulk Export"])
+    
+    with export_tabs[0]:
+        st.subheader("Quick Export Options")
         
         # Check if required columns exist
         if 'risk_score' in pairs_df.columns and 'risk_category' in pairs_df.columns:
@@ -1005,15 +1011,20 @@ def generate_reports_tab():
     
     st.header("📈 Generate Reports")
     
-    # Create tabs for different export types
-    export_tabs = st.tabs(["Quick Export", "Custom Report", "Bulk Export"])
+    # Prepare data for export
+    results = st.session_state.analysis_results
     
-    with export_tabs[0]:
-        st.subheader("Quick Export Options")
+    # Check if we have any pairs to report
+    if results['total_pairs'] == 0:
+        st.warning("""
+        📊 **No cannibalization pairs found to report**
         
-        # Prepare data for export
-        results = st.session_state.analysis_results
-        pairs_df = pd.DataFrame(results['pairs'])
+        The analysis didn't find any content similarity issues above the threshold.
+        Try adjusting your analysis settings and running again.
+        """)
+        return
+    
+    pairs_df = pd.DataFrame(results['pairs'])
         
         # Ensure risk_category column exists in pairs_df
         if 'risk_category' not in pairs_df.columns and 'risk_score' in pairs_df.columns:
@@ -1026,8 +1037,11 @@ def generate_reports_tab():
         if 'risk_category' in pairs_df.columns:
             high_risk_df = pairs_df[pairs_df['risk_category'] == 'High'].copy()
         else:
-            # Fallback: use risk_score directly
-            high_risk_df = pairs_df[pairs_df.get('risk_score', 0) >= 0.7].copy()
+            # Fallback: use risk_score directly if it exists
+            if 'risk_score' in pairs_df.columns:
+                high_risk_df = pairs_df[pairs_df['risk_score'] >= 0.7].copy()
+            else:
+                high_risk_df = pd.DataFrame()  # Empty dataframe if no risk data
             
         if not high_risk_df.empty:
             st.markdown("### 🔴 High Risk Pairs")
@@ -1097,7 +1111,7 @@ def generate_reports_tab():
                     pairs_df.to_excel(writer, sheet_name='All Pairs', index=False)
                     
                     # High risk only - with safety check
-                    if not high_risk_df.empty:
+                    if 'high_risk_df' in locals() and not high_risk_df.empty:
                         high_risk_df.to_excel(writer, sheet_name='High Risk', index=False)
                     
                     # Recommendations
