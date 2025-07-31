@@ -53,11 +53,17 @@ class CombinedDetector:
         
         # SERP analyzer (if configured)
         self.serp_analyzer = None
-        if config.get('use_serp') and hasattr(APIManager, 'get_serper_api_key'):
-            from utils.api_manager import APIManager
-            serper_key = APIManager.get_serper_api_key()
-            if serper_key:
-                self.serp_analyzer = SERPAnalyzer(serper_key)
+        if config.get('use_serp'):
+            try:
+                from utils.api_manager import APIManager
+                if APIManager.has_serper_api():
+                    serper_key = APIManager.get_serper_api_key()
+                    if serper_key:
+                        self.serp_analyzer = SERPAnalyzer(serper_key)
+            except ImportError:
+                logger.warning("APIManager not available for SERP analysis")
+            except Exception as e:
+                logger.warning(f"Could not initialize SERP analyzer: {e}")
     
     async def detect_all(self) -> pd.DataFrame:
         """
@@ -155,7 +161,12 @@ class CombinedDetector:
             return pd.DataFrame()
         
         # Import here to avoid circular imports
-        from utils.url_normalizer import URLNormalizer
+        try:
+            from utils.url_normalizer import URLNormalizer
+            use_normalizer = True
+        except ImportError:
+            logger.warning("URLNormalizer not available, using basic deduplication")
+            use_normalizer = False
         
         # Concatenate all results
         combined = pd.concat(detection_results, ignore_index=True)
@@ -164,8 +175,13 @@ class CombinedDetector:
             return combined
         
         # Normalize URLs for deduplication
-        combined['url1_norm'] = combined['url1'].apply(URLNormalizer.normalize_for_matching)
-        combined['url2_norm'] = combined['url2'].apply(URLNormalizer.normalize_for_matching)
+        if use_normalizer:
+            combined['url1_norm'] = combined['url1'].apply(URLNormalizer.normalize_for_matching)
+            combined['url2_norm'] = combined['url2'].apply(URLNormalizer.normalize_for_matching)
+        else:
+            # Fallback to basic normalization
+            combined['url1_norm'] = combined['url1'].str.lower().str.strip().str.rstrip('/')
+            combined['url2_norm'] = combined['url2'].str.lower().str.strip().str.rstrip('/')
         
         # Create canonical pair identifier (sorted URLs)
         combined['pair_id'] = combined.apply(
@@ -203,24 +219,28 @@ class CombinedDetector:
         # Combine scores from different methods
         if 'competition' in detection_methods and 'similarity' in detection_methods:
             # Both methods detected - this is high confidence
-            comp_row = group[group['detection_method'] == 'competition'].iloc[0]
-            sim_row = group[group['detection_method'] == 'similarity'].iloc[0]
+            comp_rows = group[group['detection_method'] == 'competition']
+            sim_rows = group[group['detection_method'] == 'similarity']
             
-            # Combine scores
-            merged['competition_score'] = comp_row.get('competition_score', 0)
-            merged['similarity_score'] = sim_row.get('competition_score', 0)  # Note: similarity uses 'competition_score' as primary
-            
-            # Combined confidence score
-            merged['confidence_score'] = 0.9  # High confidence when both methods agree
-            
-            # Preserve method-specific data
-            if 'shared_queries' in comp_row:
-                merged['shared_queries'] = comp_row['shared_queries']
-                merged['shared_queries_count'] = comp_row['shared_queries_count']
-            
-            if 'title_similarity' in sim_row:
-                merged['title_similarity'] = sim_row['title_similarity']
-                merged['semantic_similarity'] = sim_row.get('semantic_similarity', 0)
+            if not comp_rows.empty and not sim_rows.empty:
+                comp_row = comp_rows.iloc[0]
+                sim_row = sim_rows.iloc[0]
+                
+                # Combine scores
+                merged['competition_score'] = comp_row.get('competition_score', 0)
+                merged['similarity_score'] = sim_row.get('competition_score', 0)  # Note: similarity uses 'competition_score' as primary
+                
+                # Combined confidence score
+                merged['confidence_score'] = 0.9  # High confidence when both methods agree
+                
+                # Preserve method-specific data
+                if 'shared_queries' in comp_row:
+                    merged['shared_queries'] = comp_row['shared_queries']
+                    merged['shared_queries_count'] = comp_row['shared_queries_count']
+                
+                if 'title_similarity' in sim_row:
+                    merged['title_similarity'] = sim_row['title_similarity']
+                    merged['semantic_similarity'] = sim_row.get('semantic_similarity', 0)
         else:
             # Single method detection
             merged['confidence_score'] = 0.6  # Medium confidence
@@ -237,11 +257,11 @@ class CombinedDetector:
                 'title_similarity': row.get('title_similarity', 0),
                 'h1_similarity': row.get('h1_similarity', 0),
                 'semantic_similarity': row.get('semantic_similarity', 0),
-                'keyword_overlap': row.get('shared_queries_count', 0) / 100,  # Normalize
+                'keyword_overlap': min(row.get('shared_queries_count', 0) / 100, 1.0),  # Normalize and cap at 1.0
                 'intent_match': row.get('intent_match', 0.5),
                 'serp_overlap': row.get('serp_competition_rate', 0),
                 'traffic_difference': 0,  # Will be calculated
-                'position_variance': row.get('avg_position_spread', 10) / 20,  # Normalize
+                'position_variance': min(row.get('avg_position_spread', 10) / 20, 1.0),  # Normalize and cap at 1.0
                 'ctr_ratio': 1.0  # Default
             }
             
@@ -296,14 +316,17 @@ class CombinedDetector:
     
     def _prioritize_results(self, df: pd.DataFrame) -> pd.DataFrame:
         """Final prioritization of results"""
-        # Calculate priority score
+        # Calculate priority score with safer bounds
         df['priority_score'] = (
             df.get('ml_risk_score', df.get('competition_score', 0)) * 0.3 +
             df.get('confidence_score', 0.5) * 0.2 +
-            df.get('shared_queries_count', 0) / 100 * 0.2 +
-            df.get('traffic_opportunity', 0) / 1000 * 0.2 +
+            min(df.get('shared_queries_count', 0) / 100, 1.0) * 0.2 +
+            min(df.get('traffic_opportunity', 0) / 1000, 1.0) * 0.2 +
             df.get('detection_count', 1) / 2 * 0.1
         )
+        
+        # Ensure priority score is between 0 and 1
+        df['priority_score'] = df['priority_score'].clip(0, 1)
         
         # Sort by priority
         df = df.sort_values('priority_score', ascending=False)
