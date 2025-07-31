@@ -6,7 +6,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import logging
 from typing import Dict, List, Optional, Tuple
 import re
-from utils.url_normalizer import URLNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +34,9 @@ class SimilarityAnalyzer:
     
     def _prepare_embeddings_data(self):
         """Prepare embeddings data with normalized URLs"""
+        # Import here to avoid circular imports
+        from utils.url_normalizer import URLNormalizer
+        
         # Find URL column
         url_columns = ['URL', 'url', 'Address', 'address', 'Url']
         url_col = None
@@ -73,6 +75,9 @@ class SimilarityAnalyzer:
                                  urls_df: pd.DataFrame, 
                                  min_similarity: float = 0.3) -> pd.DataFrame:
         """Calculate all pairwise similarities between URLs"""
+        # Import here to avoid circular imports
+        from utils.url_normalizer import URLNormalizer
+        
         logger.info(f"Calculating similarities for {len(urls_df)} URLs")
         logger.info(f"Minimum similarity threshold: {min_similarity}")
         
