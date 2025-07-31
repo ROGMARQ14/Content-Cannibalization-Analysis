@@ -10,7 +10,6 @@ import logging
 
 from ..analyzers.similarity_analyzer import SimilarityAnalyzer
 from ..analyzers.content_analyzer import ContentAnalyzer
-from utils.url_normalizer import URLNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,9 @@ class SimilarityDetector:
         
     def _normalize_embeddings_urls(self):
         """Normalize URLs in embeddings data for better matching"""
+        # Import here to avoid circular imports
+        from utils.url_normalizer import URLNormalizer
+        
         # Find URL column
         url_columns = ['URL', 'url', 'Address', 'address']
         url_col = None
