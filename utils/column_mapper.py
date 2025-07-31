@@ -342,12 +342,23 @@ class FlexibleDataLoader:
             raise
     
     def _clean_internal_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean internal SEO data"""
+        """Clean internal SEO data with URL normalization"""
         # Remove any rows with missing URLs
         df = df.dropna(subset=['url'])
         
-        # Clean URLs (remove trailing slashes, normalize)
-        df['url'] = df['url'].str.strip().str.rstrip('/')
+        # Clean URLs - NORMALIZE by removing trailing slashes
+        df['url'] = df['url'].str.strip()
+        # Remove trailing slashes from ALL URLs for consistent matching
+        df['url'] = df['url'].str.rstrip('/')
+        
+        # Log URL normalization
+        logger.info("Normalized internal data URLs by removing trailing slashes")
+        
+        # Debug: Show sample normalized URLs
+        if len(df) > 0:
+            logger.debug("Sample normalized internal URLs:")
+            for url in df['url'].head(3):
+                logger.debug(f"  - {url}")
         
         # Fill missing values with empty strings
         text_columns = ['title', 'h1', 'meta_description']
@@ -358,12 +369,23 @@ class FlexibleDataLoader:
         return df
     
     def _clean_gsc_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean GSC performance data"""
+        """Clean GSC performance data with URL normalization"""
         # Remove any rows with missing URLs or queries
         df = df.dropna(subset=['url', 'query'])
         
-        # Clean URLs
-        df['url'] = df['url'].str.strip().str.rstrip('/')
+        # Clean URLs - NORMALIZE by removing trailing slashes
+        df['url'] = df['url'].str.strip()
+        # Remove trailing slashes from ALL URLs for consistent matching
+        df['url'] = df['url'].str.rstrip('/')
+        
+        # Log URL normalization
+        logger.info("Normalized GSC URLs by removing trailing slashes")
+        
+        # Debug: Show sample normalized URLs
+        if len(df) > 0:
+            logger.debug("Sample normalized GSC URLs:")
+            for url in df['url'].unique()[:3]:
+                logger.debug(f"  - {url}")
         
         # Ensure numeric columns are proper type
         numeric_columns = ['clicks', 'impressions', 'position']
